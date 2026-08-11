@@ -246,15 +246,38 @@ Give an overall 0-100 score, a 0-100 score and one-line note per rubric criterio
       1536,
     );
 
-    // Clamp: small models occasionally return out-of-range numbers.
-    return {
-      ...score,
-      score: Math.max(0, Math.min(100, Math.round(score.score))),
-      criterionScores: score.criterionScores.map((c) => ({
-        ...c,
-        score: Math.max(0, Math.min(100, Math.round(c.score))),
-      })),
-    };
+    const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
+    const criterionScores = score.criterionScores.map((c) => ({
+      ...c,
+      score: clamp(c.score),
+    }));
+
+    // Derive the headline score from the criterion scores rather than trusting
+    // the model's own overall. A 7B model reasons well per criterion but its
+    // holistic number drifts: in testing, an answer it marked 20/15/10 across
+    // the rubric still came back as 45 overall, and an empty answer it flagged
+    // as not substantive came back as 25. The per-criterion judgements are the
+    // trustworthy part, so the total is computed from them here.
+    const byKey = new Map(criterionScores.map((c) => [c.key, c.score]));
+    let weighted = 0;
+    let totalWeight = 0;
+    for (const c of input.rubric.criteria) {
+      const marked = byKey.get(c.key);
+      if (marked === undefined) continue;
+      const w = c.weight || 1;
+      weighted += marked * w;
+      totalWeight += w;
+    }
+
+    // Fall back to the model's own figure only when nothing could be matched,
+    // e.g. it invented criterion keys or the rubric was empty.
+    const derived = totalWeight > 0 ? weighted / totalWeight : clamp(score.score);
+
+    // A non-answer is not a low score, it is no score. Without this an empty
+    // box collects marks for the criteria the model felt generous about.
+    const finalScore = score.answeredSubstantively ? clamp(derived) : 0;
+
+    return { ...score, score: finalScore, criterionScores };
   }
 
   async summarise(input: SummariseInput): Promise<SessionSummary> {

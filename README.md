@@ -128,10 +128,37 @@ Question *writing* stays with the curated bank — small models drift toward
 generic, tutorial-grade questions — which is what the `preferBank` flag on the
 provider controls. It is used to generate only when the bank cannot fill a paper.
 
-**Be clear-eyed about the trade.** A 7B model marking against an explicit rubric
-is vastly better than keyword counting and good enough to rank a batch and decide
-who is worth a call. It is worse than a frontier model at catching a confident
-answer that is subtly wrong. Read the transcripts before rejecting anyone.
+**Why this is worth 15 seconds per answer.** The same three answers to
+"explain what a database index is, and why not index every column", scored by
+both free providers:
+
+| Answer | `mock` (keywords) | `ollama` (qwen2.5:7b) |
+|---|---|---|
+| Correct and complete | 76 | **88** |
+| Fluent but **factually wrong** | **55** | **15** |
+| Empty | 0 | 0 |
+
+Keyword matching puts a confidently wrong answer 21 points below a correct one,
+because the wrong answer happens to contain the same vocabulary. The local model
+puts them 73 points apart, and its concerns read *"incorrect description of what
+an index is"*. That gap is the whole argument for running a model locally.
+
+**Scores are derived, not taken on trust.** The headline score is computed from
+the model's per-criterion marks weighted by the rubric, not from the overall
+number it reports. A 7B model reasons well per criterion but its holistic figure
+drifts — in testing an answer it marked 20/15/10 across the rubric still came
+back as 45 overall, and an empty answer it flagged as not substantive came back
+as 25. Deriving the total fixed both.
+
+**Be clear-eyed about the trade.** This is good enough to rank a batch and decide
+who is worth a call. It is worse than a frontier model at catching an answer that
+is subtly rather than obviously wrong. Read the transcripts before rejecting
+anyone.
+
+**Speed:** ~15 s per answer once the model is warm, so about a minute for a
+typical paper. The first call after startup takes ~100 s while the model loads
+into VRAM. Grading already runs in the background after submission, so the
+candidate never waits.
 
 ### `mock` — free, but cannot judge anything
 
