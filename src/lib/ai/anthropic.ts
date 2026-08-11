@@ -68,6 +68,7 @@ For every type except MCQ: options must be an empty array, correctIndex must be 
 export class AnthropicProvider implements AIProvider {
   readonly name = "anthropic";
   readonly model: string;
+  readonly preferBank = false;
   private client: Anthropic;
 
   constructor() {

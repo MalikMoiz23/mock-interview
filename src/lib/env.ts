@@ -24,6 +24,12 @@ export const env = {
   get anthropicModel() {
     return process.env.ANTHROPIC_MODEL ?? "claude-opus-5";
   },
+  get ollamaBaseUrl() {
+    return process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
+  },
+  get ollamaModel() {
+    return process.env.OLLAMA_MODEL ?? "qwen2.5:7b";
+  },
   get snapshotDir() {
     return process.env.SNAPSHOT_DIR ?? "./data/snapshots";
   },

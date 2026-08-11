@@ -87,6 +87,7 @@ const GENERIC_RUBRIC: Rubric = {
 export class MockProvider implements AIProvider {
   readonly name = "mock";
   readonly model = "rubric-coverage-v2";
+  readonly preferBank = true;
 
   async generateQuestions(input: GenerateQuestionsInput): Promise<GeneratedQuestion[]> {
     // Last-resort synthetic set. The curated bank in the database is preferred;

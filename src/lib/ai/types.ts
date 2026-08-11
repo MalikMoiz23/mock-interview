@@ -126,6 +126,16 @@ export type SummariseInput = {
 export interface AIProvider {
   readonly name: string;
   readonly model: string;
+  /**
+   * True when the curated bank should be preferred over live generation.
+   *
+   * Grading against an explicit rubric and writing a good interview question
+   * are different jobs. Small local models do the first well and the second
+   * poorly — they drift toward generic, tutorial-grade questions. So local and
+   * offline providers lean on the vetted bank for questions and are used where
+   * they actually earn their keep: judging the answers.
+   */
+  readonly preferBank: boolean;
   generateQuestions(input: GenerateQuestionsInput): Promise<GeneratedQuestion[]>;
   scoreAnswer(input: ScoreAnswerInput): Promise<AnswerScore>;
   summarise(input: SummariseInput): Promise<SessionSummary>;

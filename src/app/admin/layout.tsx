@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
 import { SignOutButton } from "./sign-out-button";
+import { ProviderBanner } from "./provider-banner";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
@@ -31,7 +32,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-5 py-8">{children}</main>
+      <main className="mx-auto max-w-6xl px-5 py-8">
+        <ProviderBanner />
+        {children}
+      </main>
     </div>
   );
 }

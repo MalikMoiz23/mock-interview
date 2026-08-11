@@ -56,8 +56,12 @@ candidates.
 ## Stack
 
 Next.js 15 (App Router) · TypeScript · PostgreSQL + Prisma · Tailwind v4 ·
-MediaPipe FaceLandmarker (in-browser) · Web Speech API · Anthropic Claude
-(optional).
+MediaPipe face + object detection (in-browser) · Web Speech API · Ollama for
+local scoring · Anthropic Claude optional.
+
+**Cost to run: nothing.** Every npm dependency is MIT / Apache-2.0 / BSD,
+PostgreSQL is free, the proctoring models are Apache-2.0, and scoring runs on a
+model on your own machine. The paid Claude provider is opt-in and off by default.
 
 ---
 
@@ -92,29 +96,66 @@ Open http://localhost:3000 and sign in with `SEED_ADMIN_EMAIL` /
 
 ---
 
-## Switching on the real AI
+## Choosing a scorer
 
-The platform ships with `AI_PROVIDER=mock`. The mock is a **rubric keyword-coverage
-heuristic** — deterministic, free, and useful for testing the flow, but it cannot
-judge whether an answer is correct. Do not make hiring decisions on it.
+Three providers behind one interface. Multiple choice is graded by exact match
+in all three, so it never costs anything and is never a judgement call.
 
-To use Claude:
+| | `ollama` **(default)** | `mock` | `anthropic` |
+|---|---|---|---|
+| **Cost** | Free | Free | ~$0.36 / interview |
+| **Runs** | Your machine | In-process | Anthropic's API |
+| **Candidate data leaves your network** | No | No | Yes |
+| **Works offline** | Yes | Yes | No |
+| **Judges correctness** | Yes | **No** | Yes, best |
+| **Speed (10 questions)** | ~1–3 min | Instant | ~30 s |
+
+### `ollama` — free and actually reads the answers
+
+```bash
+winget install Ollama.Ollama      # or: brew install ollama
+ollama pull qwen2.5:7b
+# .env
+AI_PROVIDER=ollama
+```
+
+Needs ~6 GB of VRAM (or ~8 GB RAM without a GPU) for the 7B model; `qwen2.5:3b`
+runs on far less and is noticeably less reliable. Qwen2.5 is Apache-2.0, so
+there is no licence question about commercial use.
+
+Grading is where a local model earns its place, so that is all it is used for.
+Question *writing* stays with the curated bank — small models drift toward
+generic, tutorial-grade questions — which is what the `preferBank` flag on the
+provider controls. It is used to generate only when the bank cannot fill a paper.
+
+**Be clear-eyed about the trade.** A 7B model marking against an explicit rubric
+is vastly better than keyword counting and good enough to rank a batch and decide
+who is worth a call. It is worse than a frontier model at catching a confident
+answer that is subtly wrong. Read the transcripts before rejecting anyone.
+
+### `mock` — free, but cannot judge anything
+
+Counts rubric keywords. Deterministic, instant, and genuinely useful for testing
+the flow end to end. It will happily give a fluent, completely wrong answer a
+good score. **Not for hiring decisions.** The admin UI says so on every page.
+
+### `anthropic` — paid, best quality
 
 ```bash
 AI_PROVIDER=anthropic
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Nothing else changes. With a key present, questions are **generated per session**
-so two candidates for the same role never get an identical paper, and the curated
-bank becomes the fallback. Answers are scored against the rubric with structured
-outputs, so the grader's response is schema-validated rather than parsed out of
-prose.
+~6,600 input and ~6,600 output tokens per 10-question paper, so roughly **$0.36
+per interview** on `claude-opus-5` with thinking, or ~$0.07 on `claude-haiku-4-5`.
+MCQs contribute nothing to that. Here questions *are* generated per session, so
+two candidates for the same role never see the same paper.
 
-Adding a third provider means implementing `AIProvider` in
-[`src/lib/ai/types.ts`](src/lib/ai/types.ts) and registering it in
-[`src/lib/ai/index.ts`](src/lib/ai/index.ts). Nothing else in the app knows which
-provider is in use.
+### Adding another
+
+Implement `AIProvider` in [`src/lib/ai/types.ts`](src/lib/ai/types.ts) and
+register it in [`src/lib/ai/index.ts`](src/lib/ai/index.ts). Nothing else in the
+app knows which provider is in use.
 
 ---
 

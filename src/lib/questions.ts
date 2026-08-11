@@ -140,7 +140,7 @@ export async function buildQuestionSet(input: {
   const provider = getProvider();
   if (blueprintTotal(input.blueprint) === 0) return { questions: [], source: "bank" };
 
-  if (provider.name !== "mock") {
+  if (!provider.preferBank) {
     try {
       const generated = await provider.generateQuestions({
         domainName: input.domainName,
