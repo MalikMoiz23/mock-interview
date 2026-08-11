@@ -1,0 +1,324 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy + auth
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  users     User[]
+  links     InterviewLink[]
+  domains   Domain[]
+}
+
+enum UserRole {
+  OWNER
+  RECRUITER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  orgId        String
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         UserRole @default(RECRUITER)
+  createdAt    DateTime @default(now())
+  lastLoginAt  DateTime?
+
+  org          Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdLinks InterviewLink[]
+
+  @@index([orgId])
+}
+
+// ---------------------------------------------------------------------------
+// Question domain model
+// ---------------------------------------------------------------------------
+
+enum Difficulty {
+  BEGINNER
+  JUNIOR
+  MID
+  SENIOR
+  STAFF
+}
+
+/// What the question is testing.
+enum QuestionType {
+  /// Auto-graded multiple choice. No AI needed, no partial credit.
+  MCQ
+  /// Knowledge of the field: "what is X for", "when would you use Y".
+  CONCEPTUAL
+  /// A problem statement to reason through in prose.
+  SCENARIO
+  /// Code written by hand in a plain box.
+  CODING
+  /// Lived experience, answered out loud.
+  BEHAVIORAL
+}
+
+/// How the candidate gives the answer. Deliberately separate from
+/// QuestionType so a conceptual question can be spoken or typed.
+enum AnswerMode {
+  CHOICE
+  TYPED
+  SPOKEN
+}
+
+/// A hiring domain, e.g. "Frontend (React)". `orgId` null = built-in/global.
+model Domain {
+  id        String   @id @default(cuid())
+  orgId     String?
+  slug      String
+  name      String
+  blurb     String
+  createdAt DateTime @default(now())
+
+  org       Organization?     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  questions QuestionTemplate[]
+  links     InterviewLink[]
+
+  @@unique([orgId, slug])
+}
+
+/// Fallback question bank. Used verbatim by the mock AI provider and as a
+/// safety net when live question generation fails.
+model QuestionTemplate {
+  id         String       @id @default(cuid())
+  domainId   String
+  difficulty Difficulty
+  type       QuestionType
+  answerMode AnswerMode
+  prompt     String
+  /// Grading criteria: { criteria: [{ key, label, weight, keywords[] }] }
+  /// Empty for MCQ, which is graded by exact match.
+  rubric     Json
+  /// MCQ only: ordered array of option strings.
+  options    Json?
+  /// MCQ only: index of the correct option. Never sent to the browser.
+  correctIndex Int?
+  /// MCQ only: why the correct option is correct. Shown to the reviewer.
+  explanation String?
+  timeLimitSec Int        @default(240)
+  createdAt  DateTime     @default(now())
+
+  domain     Domain       @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@index([domainId, difficulty, type])
+}
+
+// ---------------------------------------------------------------------------
+// Interview links
+// ---------------------------------------------------------------------------
+
+enum LinkStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+  CONSUMED
+}
+
+model InterviewLink {
+  id             String     @id @default(cuid())
+  orgId          String
+  domainId       String
+  createdById    String
+  /// SHA-256 of the raw token. The raw token is shown to the admin exactly once.
+  tokenHash      String     @unique
+  /// First 8 chars of the raw token, for admin-side identification only.
+  tokenPreview   String
+  candidateName  String
+  candidateEmail String
+  difficulty     Difficulty
+  /// How many questions of each type to serve:
+  /// { MCQ: n, CONCEPTUAL: n, SCENARIO: n, CODING: n, BEHAVIORAL: n }
+  blueprint      Json
+  durationSec    Int        @default(1800)
+  maxAttempts    Int        @default(1)
+  status         LinkStatus @default(ACTIVE)
+  expiresAt      DateTime
+  createdAt      DateTime   @default(now())
+
+  org       Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  domain    Domain            @relation(fields: [domainId], references: [id])
+  createdBy User              @relation(fields: [createdById], references: [id])
+  sessions  InterviewSession[]
+
+  @@index([orgId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Interview sessions
+// ---------------------------------------------------------------------------
+
+enum SessionStatus {
+  PENDING
+  IN_PROGRESS
+  SUBMITTED
+  SCORED
+  ABANDONED
+  TERMINATED
+}
+
+model InterviewSession {
+  id          String        @id @default(cuid())
+  linkId      String
+  status      SessionStatus @default(PENDING)
+  consentAt   DateTime?
+  startedAt   DateTime?
+  endedAt     DateTime?
+  /// Server-authoritative deadline. Client clocks are never trusted.
+  deadlineAt  DateTime?
+  userAgent   String?
+  /// SHA-256(ip + AUTH_SECRET). Raw IPs are never stored.
+  ipHash      String?
+  screenInfo  Json?
+  sttAvailable Boolean      @default(true)
+  faceModelLoaded Boolean   @default(false)
+  objectModelLoaded Boolean @default(false)
+  createdAt   DateTime      @default(now())
+
+  link      InterviewLink    @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  questions SessionQuestion[]
+  events    ProctorEvent[]
+  snapshots Snapshot[]
+  score     SessionScore?
+
+  @@index([linkId])
+}
+
+model SessionQuestion {
+  id           String       @id @default(cuid())
+  sessionId    String
+  order        Int
+  type         QuestionType
+  answerMode   AnswerMode
+  prompt       String
+  rubric       Json
+  /// MCQ only. Options are sent to the browser; correctIndex never is.
+  options      Json?
+  correctIndex Int?
+  selectedIndex Int?
+  explanation  String?
+  timeLimitSec Int
+  /// Set server-side the moment the question is handed to the candidate.
+  servedAt     DateTime?
+  submittedAt  DateTime?
+  /// Typed answer, or the final transcript for spoken answers.
+  answerText   String       @default("")
+  /// Milliseconds of detected speech (spoken answers only).
+  spokenMs     Int          @default(0)
+  /// True when the candidate corrected the transcript by hand. Expected and
+  /// permitted — speech recognition is imperfect — but shown to the reviewer.
+  transcriptEdited Boolean  @default(false)
+  /// { keystrokes, chars, pastes, maxBurstCps, meanIkiMs, idleMs, backspaces }
+  telemetry    Json?
+  /// Per-question AI score, populated at grading time.
+  result       Json?
+
+  session      InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, order])
+  @@index([sessionId])
+}
+
+enum EventType {
+  FACE_ABSENT
+  MULTIPLE_FACES
+  /// A phone or tablet recognised in frame by the object detector.
+  PHONE_DETECTED
+  /// A second human body in frame, even with the face turned away or cropped.
+  SECOND_PERSON_DETECTED
+  /// Sound in the room while the candidate's mouth is not moving.
+  BACKGROUND_VOICE
+  /// The candidate hand-corrected a transcript. Informational, no penalty.
+  TRANSCRIPT_EDITED
+  GAZE_OFF_SCREEN
+  TAB_HIDDEN
+  WINDOW_BLUR
+  FULLSCREEN_EXIT
+  PASTE
+  COPY
+  CONTEXT_MENU
+  MULTI_DISPLAY
+  DEVTOOLS_SUSPECTED
+  KEYSTROKE_BURST
+  MEDIA_STOPPED
+  AUDIO_SILENT
+  NETWORK_OFFLINE
+  ANSWER_PACING_ANOMALY
+  MODEL_UNAVAILABLE
+}
+
+model ProctorEvent {
+  id         String    @id @default(cuid())
+  sessionId  String
+  type       EventType
+  /// 1 = informational, 2 = suspicious, 3 = serious.
+  severity   Int
+  /// Server receive time. Client-supplied timestamps go in `meta`.
+  at         DateTime  @default(now())
+  durationMs Int       @default(0)
+  meta       Json?
+
+  session    InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  snapshot   Snapshot?
+
+  @@index([sessionId, at])
+}
+
+model Snapshot {
+  id        String   @id @default(cuid())
+  sessionId String
+  eventId   String?  @unique
+  /// Path relative to SNAPSHOT_DIR. Served only to authenticated admins.
+  filename  String
+  bytes     Int
+  createdAt DateTime @default(now())
+
+  session   InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  event     ProctorEvent?    @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId])
+}
+
+enum Recommendation {
+  STRONG_YES
+  YES
+  BORDERLINE
+  NO
+  INTEGRITY_REVIEW
+}
+
+model SessionScore {
+  id             String         @id @default(cuid())
+  sessionId      String         @unique
+  /// 0-100 weighted competence score.
+  overall        Int
+  /// { technical, problemSolving, communication, depth } each 0-100
+  dimensions     Json
+  /// 0-100. 100 = no anomalies detected. NOT a proof of honesty.
+  integrityScore Int
+  /// Human-readable list of what drove the integrity score down.
+  integrityFlags Json
+  recommendation Recommendation
+  rationale      String
+  strengths      Json
+  concerns       Json
+  provider       String
+  model          String
+  scoredAt       DateTime       @default(now())
+
+  session        InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}

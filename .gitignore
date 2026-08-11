@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# Environment — contains the database password and the cookie signing secret.
+# Never commit these. Use .env.example as the template.
+.env
+.env.local
+.env.*.local
+
+# Candidate media. Violation snapshots are biometric data in several
+# jurisdictions and must not leave the machine that captured them.
+data/
+
+# Proctoring models and the MediaPipe WASM runtime (~50 MB).
+# Recreated by `npm run setup:models`, so they are not worth versioning.
+public/models/
+public/mediapipe/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
