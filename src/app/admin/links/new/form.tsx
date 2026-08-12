@@ -10,6 +10,7 @@ import {
   estimatedSeconds,
   type Blueprint,
 } from "@/lib/blueprint";
+import { planSections } from "@/lib/sections";
 
 type Domain = { id: string; name: string; blurb: string };
 
@@ -46,6 +47,7 @@ export function NewLinkForm({ domains }: { domains: Domain[] }) {
   const domain = domains.find((d) => d.id === domainId);
   const total = blueprintTotal(blueprint);
   const estimatedMin = Math.round(estimatedSeconds(blueprint) / 60);
+  const sections = planSections(blueprint);
   const tooTight = estimatedMin > durationMinutes;
 
   /** Switching seniority re-applies the preset unless the user has hand-tuned it. */
@@ -252,31 +254,79 @@ export function NewLinkForm({ domains }: { domains: Domain[] }) {
             )}
           </div>
 
-          <div className="mt-3 space-y-2">
+          <p className="mt-1 mb-3 text-xs text-ink-400">
+            Each type with at least one question becomes its own section, in the order
+            below. Candidates move freely inside a section but cannot return to one they
+            have submitted.
+          </p>
+
+          <div className="space-y-2">
             {QUESTION_TYPES.map((type) => {
               const meta = QUESTION_TYPE_META[type];
+              const count = blueprint[type];
+              const sectionNo =
+                count > 0
+                  ? QUESTION_TYPES.filter(
+                      (t, i) =>
+                        blueprint[t] > 0 && i <= QUESTION_TYPES.indexOf(type),
+                    ).length
+                  : null;
+
               return (
                 <div
                   key={type}
-                  className="flex items-center gap-3 rounded-lg border border-ink-700 bg-ink-850 p-3"
+                  className="flex items-center gap-3 rounded-lg border p-3 transition-colors"
+                  style={{
+                    borderColor: count > 0 ? "var(--color-ink-600)" : "var(--color-ink-700)",
+                    background: count > 0 ? "var(--color-ink-800)" : "var(--color-ink-850)",
+                  }}
                 >
                   <span
                     className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ background: meta.colorVar }}
+                    style={{ background: count > 0 ? meta.colorVar : "var(--color-ink-600)" }}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">{meta.label}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{meta.label}</span>
+                      {sectionNo !== null && (
+                        <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-ink-400">
+                          Section {sectionNo}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-ink-400">{meta.blurb}</div>
                   </div>
-                  <input
-                    className="input w-16 shrink-0 text-center"
-                    type="number"
-                    min={0}
-                    max={20}
-                    aria-label={`${meta.label} count`}
-                    value={blueprint[type]}
-                    onChange={(e) => setCount(type, Number(e.target.value))}
-                  />
+
+                  {/* Stepper: faster than a number input and impossible to fat-finger. */}
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      className="h-8 w-8 rounded-md border border-ink-600 text-ink-300 hover:border-ink-400 disabled:opacity-30"
+                      onClick={() => setCount(type, count - 1)}
+                      disabled={count === 0}
+                      aria-label={`One fewer ${meta.label}`}
+                    >
+                      −
+                    </button>
+                    <input
+                      className="input w-14 px-1 text-center"
+                      type="number"
+                      min={0}
+                      max={20}
+                      aria-label={`${meta.label} count`}
+                      value={count}
+                      onChange={(e) => setCount(type, Number(e.target.value))}
+                    />
+                    <button
+                      type="button"
+                      className="h-8 w-8 rounded-md border border-ink-600 text-ink-300 hover:border-ink-400 disabled:opacity-30"
+                      onClick={() => setCount(type, count + 1)}
+                      disabled={count >= 20}
+                      aria-label={`One more ${meta.label}`}
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -353,6 +403,7 @@ export function NewLinkForm({ domains }: { domains: Domain[] }) {
         </div>
 
         <div className="mt-4 space-y-1 text-xs">
+          <Row label="Sections" value={String(sections.length)} />
           <Row label="Time allowed" value={`${durationMinutes} min`} />
           <Row
             label="Realistic time needed"
@@ -360,6 +411,21 @@ export function NewLinkForm({ domains }: { domains: Domain[] }) {
             warn={tooTight}
           />
         </div>
+
+        {sections.length > 0 && (
+          <ol className="mt-4 space-y-1 border-t border-ink-700 pt-3 text-xs">
+            {sections.map((s) => (
+              <li key={s.index} className="flex justify-between gap-2">
+                <span className="text-ink-300">
+                  {s.index + 1}. {s.title}
+                </span>
+                <span className="text-ink-400">
+                  {s.count} {s.count === 1 ? "question" : "questions"}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
 
         {tooTight && (
           <p className="mt-3 rounded-md border border-warn/40 bg-warn/10 p-2 text-xs text-warn">

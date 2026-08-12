@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { activeSession, isExpired, resolveLink, serveCurrentQuestion } from "@/lib/interview";
+import { activeSession, isExpired, resolveLink } from "@/lib/interview";
 import { clientIpHash, fail, handleError, ok, rateLimit } from "@/lib/http";
 
 const TelemetrySchema = z.object({
@@ -18,29 +18,26 @@ const Body = z.object({
   questionId: z.string().min(1),
   answerText: z.string().max(20_000),
   spokenMs: z.number().int().nonnegative().max(3_600_000),
-  /** MCQ only. Null means the candidate skipped it. */
   selectedIndex: z.number().int().min(0).max(9).nullable().default(null),
-  /** True when a spoken transcript was hand-corrected. Permitted. */
   transcriptEdited: z.boolean().default(false),
   telemetry: TelemetrySchema.nullable(),
 });
 
-/** Long silence then a fluent burst is the signature of reading an answer aloud. */
-function pacingAnomaly(answerText: string, spokenMs: number): boolean {
-  const words = answerText.trim().split(/\s+/).filter(Boolean).length;
-  if (words < 40) return false;
-  if (spokenMs < 5_000) return true; // lots of text, almost no detected speech
-  const wpm = words / (spokenMs / 60_000);
-  return wpm > 230; // sustained delivery well above conversational speech
-}
-
+/**
+ * Saves a draft answer.
+ *
+ * Answers autosave as the candidate moves between questions, so a crashed tab
+ * or a dropped connection costs nothing. Nothing here finalises anything —
+ * `submittedAt` is set only when the section is submitted, which is what makes
+ * "go back and change your answer" safe to offer.
+ */
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ token: string }> },
 ) {
   try {
     const { token } = await params;
-    if (!rateLimit(`answer:${clientIpHash(req)}`, 60, 60_000)) {
+    if (!rateLimit(`answer:${clientIpHash(req)}`, 240, 60_000)) {
       return fail(429, "Too many requests.");
     }
 
@@ -66,13 +63,15 @@ export async function POST(
       where: { id: b.questionId, sessionId: session.id },
     });
     if (!question) return fail(404, "Unknown question.");
-    if (question.submittedAt) return fail(409, "This question was already answered.");
 
-    // Server-side elapsed time. A tampered client clock changes nothing here.
-    const servedAt = question.servedAt ?? new Date();
-    const elapsedSec = Math.round((Date.now() - servedAt.getTime()) / 1000);
+    // The section pointer is the authority. A client that tries to write into
+    // a submitted section — by replaying an old request or editing its own
+    // state — is refused here rather than trusted.
+    if (question.sectionIndex !== session.currentSection) {
+      return fail(409, "That section has already been submitted.");
+    }
+    if (question.submittedAt) return fail(409, "This question is already submitted.");
 
-    // An out-of-range choice would silently grade as wrong, so reject it.
     const optionCount = ((question.options as unknown as string[]) ?? []).length;
     if (question.type === "MCQ" && b.selectedIndex !== null && b.selectedIndex >= optionCount) {
       return fail(400, "That option does not exist.");
@@ -86,54 +85,12 @@ export async function POST(
         spokenMs: b.spokenMs,
         transcriptEdited: b.transcriptEdited,
         telemetry: (b.telemetry ?? undefined) as unknown as object | undefined,
-        submittedAt: new Date(),
+        // Answering clears a previous skip.
+        skipped: false,
       },
     });
 
-    if (b.transcriptEdited) {
-      // Recorded for transparency, weighted at zero. Correcting a bad
-      // transcription is expected behaviour, not evidence of anything.
-      await db.proctorEvent.create({
-        data: {
-          sessionId: session.id,
-          type: "TRANSCRIPT_EDITED",
-          severity: 1,
-          meta: { questionOrder: question.order },
-        },
-      });
-    }
-
-    // Pacing check applies to spoken answers only; typed answers are covered by
-    // keystroke telemetry recorded on the client.
-    if (question.answerMode === "SPOKEN" && pacingAnomaly(b.answerText, b.spokenMs)) {
-      await db.proctorEvent.create({
-        data: {
-          sessionId: session.id,
-          type: "ANSWER_PACING_ANOMALY",
-          severity: 2,
-          meta: { questionOrder: question.order, spokenMs: b.spokenMs, chars: b.answerText.length },
-        },
-      });
-    }
-
-    if (b.telemetry && b.telemetry.maxBurstCps > 25 && b.telemetry.chars > 200) {
-      await db.proctorEvent.create({
-        data: {
-          sessionId: session.id,
-          type: "KEYSTROKE_BURST",
-          severity: 3,
-          meta: { questionOrder: question.order, maxBurstCps: b.telemetry.maxBurstCps },
-        },
-      });
-    }
-
-    const next = await serveCurrentQuestion(session.id);
-    return ok({
-      done: next === null,
-      question: next,
-      elapsedSec,
-      overtime: elapsedSec > question.timeLimitSec,
-    });
+    return ok({ saved: true });
   } catch (err) {
     return handleError(err);
   }

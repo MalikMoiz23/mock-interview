@@ -39,7 +39,10 @@ export const GeneratedQuestionSchema = z.object({
   explanation: z.string(),
 });
 
-export type GeneratedQuestion = z.infer<typeof GeneratedQuestionSchema>;
+export type GeneratedQuestion = z.infer<typeof GeneratedQuestionSchema> & {
+  /** Set when the question came from the curated bank, for usage rotation. */
+  templateId?: string;
+};
 
 export type GenerateQuestionsInput = {
   domainName: string;

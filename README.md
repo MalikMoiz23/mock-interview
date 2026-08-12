@@ -71,7 +71,8 @@ PostgreSQL must be running. Node 20+.
 
 ```bash
 npm install
-npm run setup:models        # copies MediaPipe WASM + downloads the face model
+npm run setup:models        # MediaPipe WASM + face and object detection models
+ollama pull qwen2.5:7b      # free local scorer (see Choosing a scorer)
 cp .env.example .env        # then edit DATABASE_URL and AUTH_SECRET
 npm run db:push             # create the schema
 npm run db:seed             # domains, question bank, admin user
@@ -88,7 +89,8 @@ Open http://localhost:3000 and sign in with `SEED_ADMIN_EMAIL` /
 | `DATABASE_URL` | PostgreSQL connection string |
 | `AUTH_SECRET` | Signs admin session cookies and the IP hash. 32+ random bytes |
 | `APP_BASE_URL` | Origin used when generating candidate links |
-| `AI_PROVIDER` | `mock` (offline) or `anthropic` |
+| `AI_PROVIDER` | `ollama` (local, free, default), `mock` (offline heuristic) or `anthropic` (paid) |
+| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | Local model endpoint and tag |
 | `ANTHROPIC_API_KEY` | Required when `AI_PROVIDER=anthropic` |
 | `ANTHROPIC_MODEL` | Defaults to `claude-opus-5` |
 | `SNAPSHOT_DIR` | Where violation frames are written |
@@ -241,16 +243,51 @@ Senior and Staff level.
 2. **Device check** — camera and microphone are required; the face model and
    speech recogniser are probed and any gap is recorded on the session.
 3. **Rules** — expectations stated, then fullscreen is requested.
-4. **Questions** — served **one at a time**; the full paper is never in the
-   browser, and an MCQ's answer key never leaves the server. Spoken questions
-   transcribe live and can be corrected; typed questions use a plain text box with
-   paste blocked and keystroke telemetry recorded.
+4. **Sections** — the paper is split into sections, one per question type,
+   easiest first. See below.
 5. **Submission** — grading runs in the background; the admin view offers a manual
    re-grade if it does not complete.
+
+### Sections, navigation and skipping
+
+The paper is split into one section per question type, ordered easiest first, so
+a candidate warms up on multiple choice before writing anything long.
+
+**Inside a section** the candidate can move between questions, change answers,
+skip anything to come back to, and jump straight to a question via numbered
+pips that show at a glance what is still blank. Answers **autosave** on every
+move, so a crashed tab or a dropped connection costs nothing.
+
+**Between sections there is no way back.** Submitting a section stamps every
+question in it, records anything blank as *skipped* rather than as an empty
+answer, and advances a server-side pointer. There is no endpoint that moves it
+backwards, so a replayed request or a doctored client cannot reopen a closed
+section — the API returns 409. Before submitting, the candidate is told exactly
+how many questions are unanswered and offered a jump link to each.
+
+**Only the current section crosses the wire.** The rest of the paper — and every
+MCQ answer key — stays on the server. That is a deliberate compromise: strict
+one-question-at-a-time would be marginally harder to game, but it makes
+reviewing and changing an answer impossible, which is worse for a real
+assessment. Answer keys are never sent at all.
 
 **The clock is server-authoritative.** The deadline is stamped on the session at
 start; the client's countdown is cosmetic and a tampered clock changes nothing.
 Question timing is measured from the server-side `servedAt`.
+
+### Different questions every time
+
+256 curated questions, and the builder **rotates them**. Selection ranks by
+least-recently-used for that domain and difficulty over the last 60 days, then
+by exact difficulty match, then by a per-session shuffle. A shuffle alone is not
+enough: with a bank only just deep enough for the paper, every candidate would
+still see the same set.
+
+Measured on three consecutive beginner full-stack candidates: **0/6, 2/6 and 2/6
+identical questions** between pairs, against a pool of 14 for a 6-question
+section. Depth is what buys that variety — the recruiter's coverage panel shows
+the pool for the paper they are building, so a thin combination is visible
+before a link is sent rather than after.
 
 Candidate links are 32 bytes of CSPRNG entropy, **stored only as a SHA-256 hash**,
 shown to the recruiter once, single-use by default, and expiring. A database leak
@@ -322,7 +359,9 @@ and the grader is told explicitly that a corrected transcript is not suspicious.
 
 ```
 prisma/schema.prisma          data model
-prisma/question-bank.ts       142 curated questions across 10 fields
+prisma/question-bank.ts       curated questions across 10 fields
+prisma/question-bank-extra.ts depth bank, so rotation has room to vary papers
+src/lib/sections.ts           section planning and instructions
 prisma/seed.ts                seeding + MCQ answer-key validation
 src/lib/blueprint.ts          question-type mix, difficulty presets, time budget
 src/lib/ai/                   provider adapter (types, mock, anthropic)
@@ -335,7 +374,7 @@ src/lib/integrity.ts          event weights -> integrity score + review rule
 src/lib/questions.ts          bank selection, substitution, coverage preview
 src/lib/grading.ts            per-answer scoring + session summary
 src/app/admin/                recruiter UI
-src/app/interview/[token]/    candidate UI
+src/app/interview/[token]/    candidate UI (client.tsx orchestrates, section-view.tsx renders)
 src/app/api/                  route handlers
 ```
 

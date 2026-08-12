@@ -239,6 +239,18 @@ export default async function SessionPage({
                     <span className="text-xs text-ink-400">
                       Question {q.order + 1} of {session.questions.length}
                     </span>
+                    <span className="text-xs text-ink-400">
+                      · section {q.sectionIndex + 1}
+                    </span>
+                    {q.skipped && (
+                      <span
+                        className="text-xs font-semibold"
+                        style={{ color: "var(--color-warn)" }}
+                        title="The candidate moved past this question without answering"
+                      >
+                        · skipped
+                      </span>
+                    )}
                     {q.transcriptEdited && (
                       <span className="text-xs text-ink-400" title="Permitted — speech recognition is imperfect">
                         · transcript hand-corrected

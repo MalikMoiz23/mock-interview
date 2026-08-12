@@ -1,6 +1,19 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { DOMAINS } from "./question-bank";
+import { DOMAINS, type BankDomain } from "./question-bank";
+import { EXTRA_DOMAINS } from "./question-bank-extra";
+
+/** Merges the two banks so each domain is seeded once with all its questions. */
+function mergedDomains(): BankDomain[] {
+  const bySlug = new Map<string, BankDomain>();
+  for (const d of DOMAINS) bySlug.set(d.slug, { ...d, questions: [...d.questions] });
+  for (const extra of EXTRA_DOMAINS) {
+    const existing = bySlug.get(extra.slug);
+    if (existing) existing.questions.push(...extra.questions);
+    else bySlug.set(extra.slug, { ...extra, questions: [...extra.questions] });
+  }
+  return [...bySlug.values()];
+}
 
 const db = new PrismaClient();
 
@@ -25,10 +38,13 @@ async function main() {
     update: {},
   });
 
+  const seenPrompts = new Set<string>();
+  let duplicates = 0;
   let questionCount = 0;
   const perType: Record<string, number> = {};
 
-  for (const d of DOMAINS) {
+  const ALL = mergedDomains();
+  for (const d of ALL) {
     const existing = await db.domain.findFirst({ where: { orgId: null, slug: d.slug } });
     const domain =
       existing ??
@@ -39,7 +55,14 @@ async function main() {
     // Replace the bank for this domain so re-seeding is idempotent.
     await db.questionTemplate.deleteMany({ where: { domainId: domain.id } });
     await db.questionTemplate.createMany({
-      data: d.questions.map((q) => {
+      data: d.questions.filter((q) => {
+        // A prompt repeated across the two banks would waste a bank slot and
+        // could surface twice in one paper.
+        const key = d.slug + "|" + q.prompt;
+        if (seenPrompts.has(key)) { duplicates += 1; return false; }
+        seenPrompts.add(key);
+        return true;
+      }).map((q) => {
         perType[q.type] = (perType[q.type] ?? 0) + 1;
         return {
           domainId: domain.id,
@@ -55,7 +78,7 @@ async function main() {
         };
       }),
     });
-    questionCount += d.questions.length;
+    questionCount += await db.questionTemplate.count({ where: { domainId: domain.id } });
   }
 
   // A wrong correctIndex silently marks every candidate wrong, so validate it.
@@ -68,12 +91,13 @@ async function main() {
     return opts.length < 2 || q.correctIndex === null || q.correctIndex >= opts.length;
   });
 
-  console.log(`Seeded ${DOMAINS.length} domains, ${questionCount} questions.`);
+  console.log(`Seeded ${ALL.length} domains, ${questionCount} questions.`);
   console.log(
     `  by type: ${Object.entries(perType)
       .map(([t, n]) => `${t} ${n}`)
       .join(" · ")}`,
   );
+  if (duplicates > 0) console.warn(`  ! skipped ${duplicates} duplicate prompt(s)`);
   if (invalid.length) {
     console.error(`  ✗ ${invalid.length} MCQ(s) have an invalid correctIndex:`);
     for (const q of invalid) console.error(`    - ${q.prompt.slice(0, 70)}`);

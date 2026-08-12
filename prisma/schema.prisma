@@ -187,6 +187,9 @@ model InterviewSession {
   sttAvailable Boolean      @default(true)
   faceModelLoaded Boolean   @default(false)
   objectModelLoaded Boolean @default(false)
+  /// Server-authoritative section pointer. The client cannot move this
+  /// backwards, so a submitted section can never be revisited.
+  currentSection Int        @default(0)
   createdAt   DateTime      @default(now())
 
   link      InterviewLink    @relation(fields: [linkId], references: [id], onDelete: Cascade)
@@ -202,6 +205,16 @@ model SessionQuestion {
   id           String       @id @default(cuid())
   sessionId    String
   order        Int
+  /// Which section this question belongs to. Sections are served one at a
+  /// time; the candidate can move freely inside one but never back into a
+  /// section already submitted.
+  sectionIndex Int          @default(0)
+  /// True when the candidate reached the end of the section without answering.
+  /// Distinct from an empty answer: skipping is an explicit, allowed choice.
+  skipped      Boolean      @default(false)
+  /// Which QuestionTemplate this came from, when it came from the bank.
+  /// Used to avoid serving the same question to the next candidate.
+  templateId   String?
   type         QuestionType
   answerMode   AnswerMode
   prompt       String

@@ -29,32 +29,83 @@ function seededShuffle<T>(items: T[], seed: string): T[] {
   return out;
 }
 
+function toGenerated(r: {
+  id: string;
+  type: QuestionType;
+  answerMode: GeneratedQuestion["answerMode"];
+  prompt: string;
+  rubric: unknown;
+  timeLimitSec: number;
+  options: unknown;
+  correctIndex: number | null;
+  explanation: string | null;
+}): GeneratedQuestion {
+  return {
+    templateId: r.id,
+    type: r.type,
+    answerMode: r.answerMode,
+    prompt: r.prompt,
+    rubric: (r.rubric as Rubric) ?? { criteria: [] },
+    timeLimitSec: r.timeLimitSec,
+    options: (r.options as string[]) ?? [],
+    correctIndex: r.correctIndex ?? -1,
+    explanation: r.explanation ?? "",
+  };
+}
+
+/**
+ * How many times each template has been served recently for this domain and
+ * difficulty. Used to rotate the bank so two candidates interviewing for the
+ * same role in the same week do not sit an identical paper — the single most
+ * obvious way for questions to leak between applicants.
+ */
+async function recentUsage(
+  domainId: string,
+  difficulty: Difficulty,
+): Promise<Map<string, number>> {
+  const since = new Date(Date.now() - 60 * 86_400_000); // 60 days
+  const rows = await db.sessionQuestion.findMany({
+    where: {
+      templateId: { not: null },
+      session: { createdAt: { gte: since }, link: { domainId, difficulty } },
+    },
+    select: { templateId: true },
+  });
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.templateId) continue;
+    counts.set(r.templateId, (counts.get(r.templateId) ?? 0) + 1);
+  }
+  return counts;
+}
+
 async function fromBank(
   domainId: string,
   difficulty: Difficulty,
   type: QuestionType,
   count: number,
   seed: string,
+  usage: Map<string, number>,
 ): Promise<GeneratedQuestion[]> {
   if (count <= 0) return [];
   const rows = await db.questionTemplate.findMany({
     where: { domainId, type, difficulty: { in: NEIGHBOURS[difficulty] } },
   });
-  // Prefer exact-difficulty matches, then neighbours.
-  const exact = rows.filter((r) => r.difficulty === difficulty);
-  const rest = rows.filter((r) => r.difficulty !== difficulty);
-  const ordered = [...seededShuffle(exact, seed + type), ...seededShuffle(rest, seed + type)];
 
-  return ordered.slice(0, count).map((r) => ({
-    type: r.type,
-    answerMode: r.answerMode,
-    prompt: r.prompt,
-    rubric: (r.rubric as unknown as Rubric) ?? { criteria: [] },
-    timeLimitSec: r.timeLimitSec,
-    options: (r.options as unknown as string[]) ?? [],
-    correctIndex: r.correctIndex ?? -1,
-    explanation: r.explanation ?? "",
+  // Rank by: least-recently-used first, then exact difficulty, then a
+  // per-session shuffle. The shuffle alone is not enough — with a bank barely
+  // deep enough for the paper, every candidate would still see the same set.
+  const scored = seededShuffle(rows, seed + type).map((r, i) => ({
+    row: r,
+    used: usage.get(r.id) ?? 0,
+    exact: r.difficulty === difficulty ? 0 : 1,
+    jitter: i,
   }));
+  scored.sort(
+    (a, b) => a.used - b.used || a.exact - b.exact || a.jitter - b.jitter,
+  );
+
+  return scored.slice(0, count).map((s) => toGenerated(s.row));
 }
 
 export type QuestionSetResult = {
@@ -164,11 +215,12 @@ export async function buildQuestionSet(input: {
   }
 
   // Bank pass.
+  const usage = await recentUsage(input.domainId, input.difficulty);
   const banked: GeneratedQuestion[] = [];
   const missing: Partial<Record<QuestionType, number>> = {};
   for (const type of QUESTION_TYPES) {
     const want = input.blueprint[type] ?? 0;
-    const got = await fromBank(input.domainId, input.difficulty, type, want, input.seed);
+    const got = await fromBank(input.domainId, input.difficulty, type, want, input.seed, usage);
     banked.push(...got);
     if (got.length < want) missing[type] = want - got.length;
   }
@@ -189,17 +241,9 @@ export async function buildQuestionSet(input: {
     },
   });
   const substitutes = seededShuffle(spare, input.seed + "sub")
+    .sort((a, b) => (usage.get(a.id) ?? 0) - (usage.get(b.id) ?? 0))
     .slice(0, shortfall)
-    .map((r) => ({
-      type: r.type,
-      answerMode: r.answerMode,
-      prompt: r.prompt,
-      rubric: (r.rubric as unknown as Rubric) ?? { criteria: [] },
-      timeLimitSec: r.timeLimitSec,
-      options: (r.options as unknown as string[]) ?? [],
-      correctIndex: r.correctIndex ?? -1,
-      explanation: r.explanation ?? "",
-    }));
+    .map(toGenerated);
   banked.push(...substitutes);
   shortfall -= substitutes.length;
 

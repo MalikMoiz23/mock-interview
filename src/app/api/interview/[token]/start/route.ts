@@ -6,8 +6,10 @@ import {
   attemptsUsed,
   isExpired,
   resolveLink,
-  serveCurrentQuestion,
+  serveCurrentSection,
+  sessionProgress,
 } from "@/lib/interview";
+import { assignSections } from "@/lib/sections";
 import { clientIpHash, fail, handleError, ok, rateLimit } from "@/lib/http";
 import type { Blueprint } from "@/lib/blueprint";
 import type { Difficulty } from "@/lib/ai/types";
@@ -58,14 +60,15 @@ export async function POST(
         });
         return fail(410, "Your time for this interview has run out.");
       }
-      const question = await serveCurrentQuestion(existing.id);
-      if (!question) {
+      const section = await serveCurrentSection(existing.id);
+      if (!section) {
         return ok({ sessionId: existing.id, done: true });
       }
       return ok({
         sessionId: existing.id,
         deadlineAt: existing.deadlineAt?.toISOString() ?? null,
-        question,
+        section,
+        progress: await sessionProgress(existing.id),
         resumed: true,
       });
     }
@@ -109,10 +112,16 @@ export async function POST(
       return fail(500, "No questions are configured for this role. Contact the recruiter.");
     }
 
+    // The paper is already ordered easiest-type-first, so each change of type
+    // becomes a section boundary.
+    const sectioned = assignSections(set.questions);
+
     await db.sessionQuestion.createMany({
-      data: set.questions.map((q, i) => ({
+      data: sectioned.map((q, i) => ({
         sessionId: session.id,
         order: i,
+        sectionIndex: q.sectionIndex,
+        templateId: q.templateId ?? null,
         type: q.type,
         answerMode: q.answerMode,
         prompt: q.prompt,
@@ -144,11 +153,12 @@ export async function POST(
       await db.interviewLink.update({ where: { id: link.id }, data: { status: "CONSUMED" } });
     }
 
-    const question = await serveCurrentQuestion(session.id);
+    const section = await serveCurrentSection(session.id);
     return ok({
       sessionId: session.id,
       deadlineAt: session.deadlineAt?.toISOString() ?? null,
-      question,
+      section,
+      progress: await sessionProgress(session.id),
       questionSource: set.source,
     });
   } catch (err) {

@@ -1,5 +1,7 @@
 import { db } from "./db";
 import { hashToken } from "./crypto";
+import { QUESTION_TYPE_META } from "./blueprint";
+import { SECTION_INSTRUCTIONS } from "./sections";
 import type { AnswerMode, QuestionType } from "@prisma/client";
 
 export type ResolvedLink = Awaited<ReturnType<typeof resolveLink>>;
@@ -54,54 +56,108 @@ export function isExpired(session: { deadlineAt: Date | null }): boolean {
 
 export type ServedQuestion = {
   id: string;
-  order: number;
-  total: number;
+  /** Position within the section, 0-based. */
+  indexInSection: number;
   type: QuestionType;
   answerMode: AnswerMode;
   prompt: string;
   /** MCQ only. The correct index is deliberately absent from this payload. */
   options: string[];
   timeLimitSec: number;
-  /** Server-issued. The client counts down from this, the server enforces it. */
+  /** Draft answer already saved, so a reload restores the candidate's work. */
+  answerText: string;
+  selectedIndex: number | null;
+  skipped: boolean;
+};
+
+export type ServedSection = {
+  index: number;
+  total: number;
+  type: QuestionType;
+  title: string;
+  instructions: string;
+  questions: ServedQuestion[];
+  /** Sum of the section's per-question time allowances, for guidance only. */
+  suggestedSec: number;
+  /** Server-issued. */
   servedAt: string;
 };
 
 /**
- * Returns the next unanswered question, stamping `servedAt` the first time it
- * is handed out. Questions are served one at a time so the candidate can never
- * read ahead — the full paper is never in the browser.
+ * Returns the section the candidate is currently on, stamping `servedAt` on
+ * its questions the first time they are handed out.
+ *
+ * Only one section crosses the wire at a time. The candidate can move around
+ * inside it, but the rest of the paper — and every answer key — stays on the
+ * server.
  */
-export async function serveCurrentQuestion(
+export async function serveCurrentSection(
   sessionId: string,
-): Promise<ServedQuestion | null> {
-  const questions = await db.sessionQuestion.findMany({
+): Promise<ServedSection | null> {
+  const session = await db.interviewSession.findUnique({
+    where: { id: sessionId },
+    select: { currentSection: true },
+  });
+  if (!session) return null;
+
+  const all = await db.sessionQuestion.findMany({
     where: { sessionId },
     orderBy: { order: "asc" },
   });
-  const next = questions.find((q) => q.submittedAt === null);
-  if (!next) return null;
+  if (all.length === 0) return null;
 
-  const servedAt =
-    next.servedAt ??
-    (
-      await db.sessionQuestion.update({
-        where: { id: next.id },
-        data: { servedAt: new Date() },
-        select: { servedAt: true },
-      })
-    ).servedAt!;
+  const totalSections = new Set(all.map((q) => q.sectionIndex)).size;
+  if (session.currentSection >= totalSections) return null;
+
+  const questions = all.filter((q) => q.sectionIndex === session.currentSection);
+  if (questions.length === 0) return null;
+
+  const now = new Date();
+  const unstamped = questions.filter((q) => q.servedAt === null).map((q) => q.id);
+  if (unstamped.length > 0) {
+    await db.sessionQuestion.updateMany({
+      where: { id: { in: unstamped } },
+      data: { servedAt: now },
+    });
+  }
+
+  const first = questions[0];
+  const meta = QUESTION_TYPE_META[first.type];
 
   return {
-    id: next.id,
-    order: next.order,
-    total: questions.length,
-    type: next.type,
-    answerMode: next.answerMode,
-    prompt: next.prompt,
-    // Only the option text crosses the wire. `correctIndex` stays server-side
-    // so the answer key is never in the candidate's browser.
-    options: (next.options as unknown as string[]) ?? [],
-    timeLimitSec: next.timeLimitSec,
-    servedAt: servedAt.toISOString(),
+    index: session.currentSection,
+    total: totalSections,
+    type: first.type,
+    title: meta.label,
+    instructions: SECTION_INSTRUCTIONS[first.type],
+    suggestedSec: questions.reduce((s, q) => s + q.timeLimitSec, 0),
+    servedAt: (first.servedAt ?? now).toISOString(),
+    questions: questions.map((q, i) => ({
+      id: q.id,
+      indexInSection: i,
+      type: q.type,
+      answerMode: q.answerMode,
+      prompt: q.prompt,
+      // Only the option text crosses the wire. `correctIndex` stays server-side
+      // so the answer key is never in the candidate's browser.
+      options: (q.options as unknown as string[]) ?? [],
+      timeLimitSec: q.timeLimitSec,
+      answerText: q.answerText,
+      selectedIndex: q.selectedIndex,
+      skipped: q.skipped,
+    })),
+  };
+}
+
+/** Progress counters for the candidate's header. */
+export async function sessionProgress(sessionId: string) {
+  const all = await db.sessionQuestion.findMany({
+    where: { sessionId },
+    select: { sectionIndex: true, submittedAt: true },
+  });
+  return {
+    totalQuestions: all.length,
+    answeredQuestions: all.filter((q) => q.submittedAt !== null).length,
+    totalSections: new Set(all.map((q) => q.sectionIndex)).size,
   };
 }
