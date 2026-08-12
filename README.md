@@ -289,17 +289,34 @@ Question timing is measured from the server-side `servedAt`.
 
 ### Different questions every time
 
-256 curated questions, and the builder **rotates them**. Selection ranks by
+412 curated questions across 10 fields — every field has at least 39 — and the
+builder **rotates them**. Selection ranks by
 least-recently-used for that domain and difficulty over the last 60 days, then
 by exact difficulty match, then by a per-session shuffle. A shuffle alone is not
 enough: with a bank only just deep enough for the paper, every candidate would
 still see the same set.
 
-Measured on three consecutive beginner full-stack candidates: **0/6, 2/6 and 2/6
-identical questions** between pairs, against a pool of 14 for a 6-question
-section. Depth is what buys that variety — the recruiter's coverage panel shows
-the pool for the paper they are building, so a thin combination is visible
-before a link is sent rather than after.
+**Depth is what buys the variety, and it has to be depth at the right
+difficulty.** A beginner paper draws only from BEGINNER and JUNIOR questions,
+and an early measurement found the long-form pools there were 2, 1 and
+sometimes 0 against a paper needing 2, 1 and 1 — so multiple choice rotated
+freely while every candidate answered the same conceptual and scenario
+questions. Entry-level long-form questions were added to close that.
+
+Measured over five consecutive beginner candidates per field, end to end:
+
+| | Full Stack | UI/UX | QA |
+|---|---|---|---|
+| Distinct questions used across 5 papers | 28 | 26 | 27 |
+| Average overlap between any two papers | 2.4/10 | 2.8/10 | 2.3/10 |
+| Identical papers | 0 | 0 | 0 |
+| Distinct multiple choice used | 14 | 13 | 16 |
+| Distinct conceptual used | 5 | 5 | 5 |
+| Distinct scenario used | 4 | 4 | 3 |
+| Distinct behavioural used | 5 | 4 | 3 |
+
+The recruiter's coverage panel shows the pool for the paper being built, so a
+thin combination is visible before a link is sent rather than after.
 
 Candidate links are 32 bytes of CSPRNG entropy, **stored only as a SHA-256 hash**,
 shown to the recruiter once, single-use by default, and expiring. A database leak
