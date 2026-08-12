@@ -32,7 +32,20 @@ type QueuedEvent = {
   meta?: Record<string, unknown>;
 };
 
-export type MonitorWarning = { type: EventType; message: string; at: number };
+export type MonitorWarning = {
+  /**
+   * Unique per warning. A timestamp is not: several checks run in the same
+   * tick — a phone and a second person are detected together — so two warnings
+   * routinely share a millisecond. Keying React on the timestamp collapsed
+   * them into one, and dismissing either removed both.
+   */
+  id: number;
+  type: EventType;
+  message: string;
+  at: number;
+};
+
+let warningSequence = 0;
 
 type MonitorOptions = {
   token: string;
@@ -163,7 +176,7 @@ export class ProctorMonitor {
     if (this.stopped) return;
     this.queue.push({ type, durationMs: Math.round(durationMs), clientAt: Date.now(), meta });
     const text = WARNING_TEXT[type];
-    if (text) this.opts.onWarning({ type, message: text, at: Date.now() });
+    if (text) this.opts.onWarning({ id: ++warningSequence, type, message: text, at: Date.now() });
     if (this.queue.length >= FLUSH_AT_QUEUE) void this.flush();
   }
 
@@ -389,7 +402,7 @@ export class ProctorMonitor {
   /** Warns the candidate without writing an event. */
   private warn(type: EventType): void {
     const text = WARNING_TEXT[type];
-    if (text) this.opts.onWarning({ type, message: text, at: Date.now() });
+    if (text) this.opts.onWarning({ id: ++warningSequence, type, message: text, at: Date.now() });
   }
 
   /** Uploads one evidence frame, rate-limited so a stuck state cannot flood. */

@@ -113,8 +113,14 @@ export function InterviewClient({ token }: { token: string }) {
   }, [stream]);
 
   const pushWarning = useCallback((w: MonitorWarning) => {
-    setWarnings((prev) => [...prev.slice(-3), w]);
-    window.setTimeout(() => setWarnings((prev) => prev.filter((x) => x.at !== w.at)), 6000);
+    setWarnings((prev) => {
+      // Collapse repeats of the same warning rather than stacking them. Looking
+      // away three times should refresh one notice, not build a wall of
+      // identical toasts over the question the candidate is trying to read.
+      const others = prev.filter((x) => x.type !== w.type);
+      return [...others.slice(-2), w];
+    });
+    window.setTimeout(() => setWarnings((prev) => prev.filter((x) => x.id !== w.id)), 6000);
   }, []);
 
   // --- Device check ---------------------------------------------------------
@@ -578,7 +584,7 @@ export function InterviewClient({ token }: { token: string }) {
         <div className="fixed right-4 top-24 z-20 w-72 space-y-2">
           {warnings.map((w) => (
             <div
-              key={w.at}
+              key={w.id}
               role="alert"
               className="rounded-lg border p-3 text-xs"
               style={{
