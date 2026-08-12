@@ -73,6 +73,30 @@ export class VoiceMonitor {
     }
   }
 
+  /**
+   * "running" once audio is actually flowing. Browsers only honour resume()
+   * inside a user gesture, and start() runs from an effect — by which point
+   * the gesture has lapsed — so a context can sit "suspended" indefinitely and
+   * every sample reads zero. The UI needs to see that rather than showing a
+   * dead level meter and blaming the microphone.
+   */
+  state(): AudioContextState | "unavailable" {
+    return this.ctx?.state ?? "unavailable";
+  }
+
+  /** Call from inside a click handler to satisfy the gesture requirement. */
+  async resume(): Promise<boolean> {
+    const ctx = this.ctx;
+    if (!ctx) return false;
+    if (ctx.state === "running") return true;
+    try {
+      await ctx.resume();
+      return this.state() === "running";
+    } catch {
+      return false;
+    }
+  }
+
   /** Mean normalised magnitude across the speech band. */
   sample(): AudioState {
     if (!this.analyser || !this.freq) return { speechEnergy: 0, speaking: false };

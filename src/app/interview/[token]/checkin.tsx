@@ -130,22 +130,45 @@ export function CameraCheck({
 
 // --- Microphone step --------------------------------------------------------
 
-/** Sustained level above this counts as the microphone genuinely working. */
-const MIC_OK_LEVEL = 0.04;
-const MIC_OK_SAMPLES = 5;
+/**
+ * Absolute floor. Below this the signal is indistinguishable from a dead
+ * microphone regardless of the room, so it is the one hard bound.
+ */
+const MIC_ABSOLUTE_FLOOR = 0.012;
+/** Speech must exceed the measured room noise by this factor to count. */
+const MIC_SIGNAL_RATIO = 2.2;
+const MIC_OK_SAMPLES = 4;
+const CALIBRATE_MS = 1200;
+/**
+ * After this long the candidate is let through regardless.
+ *
+ * A gate that cannot be passed is worse than no gate. Aggressive noise
+ * suppression, unusual hardware and browser audio quirks can all hold the
+ * level under any threshold, and the alternative is a candidate permanently
+ * unable to sit the interview. The outcome is recorded instead, so the
+ * recruiter knows why the spoken answers may be empty.
+ */
+const MIC_ESCAPE_MS = 15000;
 
 export function MicCheck({
   stream,
   onContinue,
 }: {
   stream: MediaStream;
-  onContinue: () => void;
+  onContinue: (micVerified: boolean) => void;
 }) {
   const [level, setLevel] = useState(0);
   const [peak, setPeak] = useState(0);
+  const [noiseFloor, setNoiseFloor] = useState<number | null>(null);
   const [heard, setHeard] = useState(false);
+  const [suspended, setSuspended] = useState(false);
+  const [escaped, setEscaped] = useState(false);
+
   const monitorRef = useRef<VoiceMonitor | null>(null);
   const goodSamples = useRef(0);
+  const calibration = useRef<number[]>([]);
+  const startedAt = useRef(Date.now());
+  const floorRef = useRef<number | null>(null);
 
   useEffect(() => {
     const monitor = new VoiceMonitor();
@@ -153,19 +176,51 @@ export function MicCheck({
     let id = 0;
 
     void monitor.start(stream).then((okStart) => {
-      if (!okStart) return;
+      if (!okStart) {
+        setSuspended(true);
+        return;
+      }
+      setSuspended(monitor.state() !== "running");
+
       id = window.setInterval(() => {
+        if (monitor.state() !== "running") {
+          setSuspended(true);
+          return;
+        }
+        setSuspended(false);
+
         const { speechEnergy } = monitor.sample();
         setLevel(speechEnergy);
-        setPeak((p) => Math.max(p, speechEnergy));
-        // Require several consecutive loud samples so a door slam does not pass
-        // the check for a microphone that is actually muted.
-        if (speechEnergy > MIC_OK_LEVEL) {
+        setPeak((prev) => Math.max(prev, speechEnergy));
+
+        // Learn the room's noise floor first, then judge speech against it. A
+        // fixed threshold fails on quiet microphones and noisy rooms alike.
+        if (Date.now() - startedAt.current < CALIBRATE_MS) {
+          calibration.current.push(speechEnergy);
+          return;
+        }
+        if (floorRef.current === null) {
+          const samples = calibration.current;
+          const floor = samples.length
+            ? samples.reduce((a, b) => a + b, 0) / samples.length
+            : 0;
+          floorRef.current = floor;
+          setNoiseFloor(floor);
+          return;
+        }
+
+        const threshold = Math.max(
+          MIC_ABSOLUTE_FLOOR,
+          floorRef.current * MIC_SIGNAL_RATIO,
+        );
+        if (speechEnergy > threshold) {
           goodSamples.current += 1;
           if (goodSamples.current >= MIC_OK_SAMPLES) setHeard(true);
         } else {
           goodSamples.current = 0;
         }
+
+        if (Date.now() - startedAt.current > MIC_ESCAPE_MS) setEscaped(true);
       }, 100) as unknown as number;
     });
 
@@ -176,15 +231,26 @@ export function MicCheck({
     };
   }, [stream]);
 
+  function restartCalibration() {
+    startedAt.current = Date.now();
+    calibration.current = [];
+    floorRef.current = null;
+    goodSamples.current = 0;
+    setNoiseFloor(null);
+    setEscaped(false);
+  }
+
   const bars = 20;
-  const lit = Math.min(bars, Math.round((level / 0.15) * bars));
+  const scale = Math.max(0.12, (noiseFloor ?? 0) * 6);
+  const lit = Math.min(bars, Math.round((level / scale) * bars));
+  const calibrating = noiseFloor === null && !suspended;
 
   return (
     <div className="card w-full max-w-lg p-7">
       <StepHeader step={2} total={3} title="Microphone check" />
       <p className="mt-1 text-sm text-ink-400">
-        Some questions are answered out loud. Say a full sentence — for example,
-        read this line aloud — so we can confirm your microphone is working.
+        Some questions are answered out loud. Read this sentence aloud so we can
+        confirm your microphone is working.
       </p>
 
       <div className="mt-6 flex items-center gap-1" aria-hidden>
@@ -204,29 +270,86 @@ export function MicCheck({
         ))}
       </div>
 
-      <p
-        className="mt-4 text-sm"
-        role="status"
-        style={{ color: heard ? "var(--color-good)" : "var(--color-warn)" }}
-      >
-        {heard
-          ? "✓ We can hear you clearly."
-          : peak > 0.01
-            ? "Almost — speak a little louder or move closer to the microphone."
-            : "Waiting to hear you. If nothing moves, check your microphone is not muted and is selected as the input device."}
+      {/* Real numbers: "it does not work" is unactionable without them. */}
+      <p className="mono mt-2 text-[0.7rem] text-ink-400">
+        level {level.toFixed(3)} · peak {peak.toFixed(3)} ·{" "}
+        {noiseFloor === null ? "calibrating" : "room " + noiseFloor.toFixed(3)}
       </p>
 
-      <button className="btn btn-primary mt-5 w-full" disabled={!heard} onClick={onContinue}>
-        {heard ? "Continue" : "Speak to continue"}
-      </button>
+      {suspended ? (
+        <>
+          <p className="mt-4 text-sm text-warn" role="status">
+            Your browser paused audio processing until you interact with the
+            page. Press the button below to start the microphone test.
+          </p>
+          <button
+            className="btn btn-primary mt-4 w-full"
+            onClick={async () => {
+              // Must run inside the click. Browsers only honour resume() from a
+              // user gesture, which an effect does not provide.
+              const resumed = (await monitorRef.current?.resume()) ?? false;
+              setSuspended(!resumed);
+              restartCalibration();
+            }}
+          >
+            Start microphone test
+          </button>
+        </>
+      ) : (
+        <>
+          <p
+            className="mt-4 text-sm"
+            role="status"
+            style={{ color: heard ? "var(--color-good)" : "var(--color-warn)" }}
+          >
+            {heard
+              ? "We can hear you clearly."
+              : calibrating
+                ? "Measuring background noise — stay quiet for a moment."
+                : peak > MIC_ABSOLUTE_FLOOR
+                  ? "Almost — speak a little louder, or move closer to the microphone."
+                  : "Waiting to hear you. Say a full sentence out loud."}
+          </p>
+
+          <button
+            className="btn btn-primary mt-5 w-full"
+            disabled={!heard && !escaped}
+            onClick={() => onContinue(heard)}
+          >
+            {heard
+              ? "Continue"
+              : escaped
+                ? "Continue without a verified microphone"
+                : "Speak to continue"}
+          </button>
+
+          {!heard && escaped && (
+            <p className="mt-2 text-xs leading-relaxed text-warn">
+              We could not detect your voice. You can continue, but spoken
+              questions may record nothing — this is noted on your result so the
+              hiring team knows why. Fix the microphone first if you can.
+            </p>
+          )}
+
+          {!heard && !calibrating && (
+            <button
+              className="mt-3 w-full text-xs text-ink-400 hover:text-ink-100"
+              onClick={restartCalibration}
+            >
+              Recalibrate — use this if the room was noisy when the test started
+            </button>
+          )}
+        </>
+      )}
 
       <details className="mt-4 text-xs text-ink-400">
         <summary className="cursor-pointer">The bars are not moving</summary>
         <ul className="mt-2 space-y-1 pl-4">
-          <li>· Check the microphone is not muted in your operating system.</li>
-          <li>· Check the correct input device is selected in your sound settings.</li>
-          <li>· Close any other app that may be holding the microphone.</li>
-          <li>· Reload this page and allow microphone access when prompted.</li>
+          <li>Check the microphone is not muted in your operating system.</li>
+          <li>Check the correct input device is selected in your sound settings.</li>
+          <li>Close any other app that may be holding the microphone.</li>
+          <li>Some headsets have an inline mute switch — check it.</li>
+          <li>Reload this page and allow microphone access when prompted.</li>
         </ul>
       </details>
     </div>

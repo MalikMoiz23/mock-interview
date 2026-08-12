@@ -59,6 +59,7 @@ export function InterviewClient({ token }: { token: string }) {
   const [preparingStep, setPreparingStep] = useState("");
 
   const [identityPhoto, setIdentityPhoto] = useState<string | null>(null);
+  const [micVerified, setMicVerified] = useState(true);
   const [drafts, setDrafts] = useState<DraftMap>({});
   const [interimText, setInterimText] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -201,6 +202,7 @@ export function InterviewClient({ token }: { token: string }) {
         faceModelLoaded: faceOk,
         objectModelLoaded: objectOk,
         identityPhoto: identityPhoto ?? undefined,
+        micVerified,
         screen: {
           width: window.screen.width,
           height: window.screen.height,
@@ -544,7 +546,13 @@ export function InterviewClient({ token }: { token: string }) {
   if (stage === "mic" && stream) {
     return (
       <Centred>
-        <MicCheck stream={stream} onContinue={() => setStage("guide")} />
+        <MicCheck
+          stream={stream}
+          onContinue={(verified) => {
+            setMicVerified(verified);
+            setStage("guide");
+          }}
+        />
       </Centred>
     );
   }
@@ -559,6 +567,10 @@ export function InterviewClient({ token }: { token: string }) {
             <ul className="grid gap-2 text-sm sm:grid-cols-2">
               <Check ok label="Camera and microphone working" />
               <Check ok={identityPhoto !== null} label="Check-in photo taken" />
+              <Check
+                ok={micVerified}
+                label={micVerified ? "Microphone verified" : "Microphone not verified — reported"}
+              />
               <Check
                 ok={faceOk}
                 label={faceOk ? "Face monitoring active" : "Face monitoring unavailable — reported"}

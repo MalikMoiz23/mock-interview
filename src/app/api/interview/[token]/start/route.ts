@@ -28,6 +28,8 @@ const Body = z.object({
    * reference to compare them against.
    */
   identityPhoto: z.string().max(900_000).optional(),
+  /** False when the check-in could not hear the candidate at all. */
+  micVerified: z.boolean().default(true),
   screen: z
     .object({
       width: z.number().int().nonnegative(),
@@ -152,6 +154,20 @@ export async function POST(
       } catch (err) {
         console.error("[start] Identity photo rejected:", (err as Error).message);
       }
+    }
+
+    // A candidate who got past the microphone check without being heard may
+    // produce empty spoken answers. Recording it here means the recruiter sees
+    // the cause rather than assuming the candidate said nothing.
+    if (!parsed.data.micVerified) {
+      await db.proctorEvent.create({
+        data: {
+          sessionId: session.id,
+          type: "AUDIO_SILENT",
+          severity: 1,
+          meta: { stage: "checkin" },
+        },
+      });
     }
 
     if (!parsed.data.faceModelLoaded) {

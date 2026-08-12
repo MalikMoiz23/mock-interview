@@ -136,7 +136,7 @@ export const EVENT_RULES: Record<EventType, Rule> = {
     penalty: 2,
     cap: 10,
     severity: 1,
-    label: (n) => `Microphone silent during ${n} spoken answer(s)`,
+    label: (n) => `Microphone produced no detectable sound (${n} occurrence(s))`,
   },
   NETWORK_OFFLINE: {
     penalty: 2,
