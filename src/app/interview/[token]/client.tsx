@@ -6,6 +6,7 @@ import { initObjectDetector, disposeObjectDetector } from "@/lib/proctor/objects
 import { ProctorMonitor, type MonitorWarning } from "@/lib/proctor/monitor";
 import { Transcriber, isSttSupported } from "@/lib/proctor/stt";
 import { KeystrokeTracker } from "@/lib/proctor/telemetry";
+import { CameraCheck, Guide, MicCheck } from "./checkin";
 import {
   SectionView,
   type DraftMap,
@@ -26,7 +27,16 @@ type LinkInfo = {
 
 type Progress = { totalQuestions: number; answeredQuestions: number; totalSections: number };
 
-type Stage = "loading" | "error" | "consent" | "devices" | "rules" | "interview" | "done";
+type Stage =
+  | "loading"
+  | "error"
+  | "consent"
+  | "permissions"
+  | "camera"
+  | "mic"
+  | "guide"
+  | "interview"
+  | "done";
 
 export function InterviewClient({ token }: { token: string }) {
   const [stage, setStage] = useState<Stage>("loading");
@@ -48,6 +58,7 @@ export function InterviewClient({ token }: { token: string }) {
   const [preparing, setPreparing] = useState(false);
   const [preparingStep, setPreparingStep] = useState("");
 
+  const [identityPhoto, setIdentityPhoto] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<DraftMap>({});
   const [interimText, setInterimText] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -144,7 +155,7 @@ export function InterviewClient({ token }: { token: string }) {
       setFaceOk(await initFaceLandmarker());
       setPreparingStep("Loading object detection…");
       setObjectOk(await initObjectDetector());
-      setStage("rules");
+      setStage("camera");
     } catch (err) {
       setDeviceError(
         err instanceof DOMException && err.name === "NotAllowedError"
@@ -189,6 +200,7 @@ export function InterviewClient({ token }: { token: string }) {
         sttAvailable: sttOk,
         faceModelLoaded: faceOk,
         objectModelLoaded: objectOk,
+        identityPhoto: identityPhoto ?? undefined,
         screen: {
           width: window.screen.width,
           height: window.screen.height,
@@ -452,7 +464,7 @@ export function InterviewClient({ token }: { token: string }) {
           </p>
 
           <div className="mt-6 flex flex-wrap gap-3">
-            <button className="btn btn-primary" onClick={() => setStage("devices")}>
+            <button className="btn btn-primary" onClick={() => setStage("permissions")}>
               I consent — continue
             </button>
             <button
@@ -472,75 +484,100 @@ export function InterviewClient({ token }: { token: string }) {
     );
   }
 
-  if (stage === "devices") {
+  if (stage === "permissions") {
     return (
       <Centred>
         <div className="card w-full max-w-lg p-7">
-          <h1 className="text-lg font-semibold">Camera and microphone check</h1>
+          <h1 className="text-lg font-semibold">Allow camera and microphone</h1>
           <p className="mt-1 text-sm text-ink-400">
-            Allow access when your browser asks. Both are required.
+            Your browser will ask for permission. Both are required — the interview
+            cannot run without them.
           </p>
+
           <div className="mt-5 aspect-video overflow-hidden rounded-lg bg-ink-950">
-            <video ref={attachVideo} className="h-full w-full scale-x-[-1] object-cover" muted playsInline />
+            <video
+              ref={attachVideo}
+              className="h-full w-full scale-x-[-1] object-cover"
+              muted
+              playsInline
+            />
           </div>
+
           {deviceError && (
             <p className="mt-4 text-sm text-bad" role="alert">
               {deviceError}
             </p>
           )}
-          <button className="btn btn-primary mt-5 w-full" onClick={requestDevices} disabled={preparing}>
-            {preparing ? preparingStep || "Preparing…" : "Enable camera and microphone"}
+
+          <button
+            className="btn btn-primary mt-5 w-full"
+            onClick={requestDevices}
+            disabled={preparing}
+          >
+            {preparing ? preparingStep || "Preparing…" : "Allow camera and microphone"}
           </button>
+
           <p className="mt-4 text-xs leading-relaxed text-ink-400">
-            Use Chrome or Edge on a laptop or desktop. Loading the monitoring models takes
-            a few seconds on first run.
+            Use Chrome or Edge on a laptop or desktop. The monitoring models take a few
+            seconds to load the first time.
           </p>
         </div>
       </Centred>
     );
   }
 
-  if (stage === "rules" && info) {
+  if (stage === "camera") {
     return (
       <Centred>
-        <div className="card w-full max-w-2xl p-7">
-          <h1 className="text-lg font-semibold">You are ready to start</h1>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            <div className="aspect-video overflow-hidden rounded-lg bg-ink-950">
-              <video ref={attachVideo} className="h-full w-full scale-x-[-1] object-cover" muted playsInline autoPlay />
-            </div>
-            <ul className="space-y-2 text-sm">
-              <Check ok label="Camera and microphone connected" />
-              <Check ok={faceOk} label={faceOk ? "Face monitoring active" : "Face monitoring unavailable — reported to the recruiter"} />
-              <Check ok={objectOk} label={objectOk ? "Phone and second-person detection active" : "Phone detection unavailable — reported to the recruiter"} />
-              <Check ok={sttOk} label={sttOk ? "Speech recognition available" : "Speech recognition unavailable — you will type every answer"} />
+        <CameraCheck
+          attachVideo={attachVideo}
+          getVideo={() => videoRef.current}
+          faceModelReady={faceOk}
+          photo={identityPhoto}
+          onPhoto={setIdentityPhoto}
+          onContinue={() => setStage("mic")}
+        />
+      </Centred>
+    );
+  }
+
+  if (stage === "mic" && stream) {
+    return (
+      <Centred>
+        <MicCheck stream={stream} onContinue={() => setStage("guide")} />
+      </Centred>
+    );
+  }
+
+  if (stage === "guide" && info) {
+    return (
+      <Centred>
+        <div className="w-full max-w-2xl">
+          {/* Device readiness stays visible: if something is unavailable the
+              candidate should know before the clock starts, not after. */}
+          <div className="card mb-4 p-4">
+            <ul className="grid gap-2 text-sm sm:grid-cols-2">
+              <Check ok label="Camera and microphone working" />
+              <Check ok={identityPhoto !== null} label="Check-in photo taken" />
+              <Check
+                ok={faceOk}
+                label={faceOk ? "Face monitoring active" : "Face monitoring unavailable — reported"}
+              />
+              <Check
+                ok={sttOk}
+                label={sttOk ? "Speech recognition available" : "Speech recognition unavailable — you will type spoken answers"}
+              />
             </ul>
           </div>
 
-          <div className="mt-6 rounded-lg border border-ink-700 bg-ink-850 p-4 text-sm text-ink-300">
-            <p className="font-semibold text-ink-100">How the interview works</p>
-            <ul className="mt-2 space-y-1">
-              <li>
-                · The paper is split into sections. Inside a section you can move between
-                questions, change answers, and skip anything you want to come back to.
-              </li>
-              <li>
-                · <strong>Once you submit a section you cannot return to it.</strong> You
-                will be asked to confirm, and told what you have left unanswered.
-              </li>
-              <li>· Answers save automatically as you move between questions.</li>
-              <li>· Stay in fullscreen, alone and in frame. Keep your phone out of shot.</li>
-              <li>· Pasting into answers is blocked and recorded.</li>
-              <li>
-                · The clock runs for {Math.round(info.durationSec / 60)} minutes from the
-                moment you press start and does not pause.
-              </li>
-            </ul>
-          </div>
-
-          <button className="btn btn-primary mt-6 w-full" onClick={startInterview} disabled={preparing}>
-            {preparing ? "Starting…" : "Start interview"}
-          </button>
+          <Guide
+            durationMin={Math.round(info.durationSec / 60)}
+            sectionCount={progress?.totalSections ?? Math.max(1, [info.mcqCount, info.spokenCount, info.typedCount].filter((n) => n > 0).length)}
+            questionCount={info.questionCount}
+            hasSpoken={info.spokenCount > 0}
+            onStart={startInterview}
+            starting={preparing}
+          />
         </div>
       </Centred>
     );

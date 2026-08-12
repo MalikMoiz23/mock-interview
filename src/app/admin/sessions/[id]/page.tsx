@@ -51,6 +51,11 @@ export default async function SessionPage({
   const strengths = (session.score?.strengths as unknown as string[]) ?? [];
   const concerns = (session.score?.concerns as unknown as string[]) ?? [];
 
+  // The check-in photo is who sat the interview; violation frames are evidence
+  // from during it. Mixing them in one gallery buries the reference image.
+  const identityPhoto = session.snapshots.find((s) => s.kind === "IDENTITY") ?? null;
+  const violationFrames = session.snapshots.filter((s) => s.kind === "VIOLATION");
+
   const elapsed =
     session.startedAt && session.endedAt
       ? session.endedAt.getTime() - session.startedAt.getTime()
@@ -63,7 +68,24 @@ export default async function SessionPage({
       </Link>
 
       <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
-        <div>
+        <div className="flex items-start gap-4">
+          {identityPhoto && (
+            <a
+              href={`/api/admin/snapshots/${identityPhoto.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="block shrink-0 overflow-hidden rounded-lg border border-ink-700"
+              title="Check-in photo, taken before the interview started"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`/api/admin/snapshots/${identityPhoto.id}`}
+                alt={`Check-in photo of ${session.link.candidateName}`}
+                className="h-20 w-28 object-cover"
+              />
+            </a>
+          )}
+          <div>
           <h1 className="text-xl font-semibold">{session.link.candidateName}</h1>
           <p className="mt-1 text-sm text-ink-400">
             {session.link.domain.name} · {session.link.difficulty.toLowerCase()} ·{" "}
@@ -75,6 +97,12 @@ export default async function SessionPage({
               : "Never started"}
             {elapsed !== null && ` · took ${formatDuration(elapsed)}`}
           </p>
+          {identityPhoto && (
+            <p className="mt-1 text-xs text-ink-400">
+              Check-in photo taken at {identityPhoto.createdAt.toLocaleTimeString()} — click to enlarge
+            </p>
+          )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <StatusPill value={session.status} />
@@ -431,11 +459,11 @@ export default async function SessionPage({
             </h2>
             <PurgeMediaButton sessionId={session.id} count={session.snapshots.length} />
           </div>
-          {session.snapshots.length === 0 ? (
+          {violationFrames.length === 0 ? (
             <p className="mt-3 text-sm text-ink-400">No frames captured.</p>
           ) : (
             <div className="mt-3 grid max-h-96 grid-cols-3 gap-2 overflow-auto">
-              {session.snapshots.map((s) => (
+              {violationFrames.map((s) => (
                 <a
                   key={s.id}
                   href={`/api/admin/snapshots/${s.id}`}
@@ -455,7 +483,7 @@ export default async function SessionPage({
             </div>
           )}
           <p className="mt-3 text-xs leading-relaxed text-ink-400">
-            Frames are captured only at flagged moments and are visible to signed-in
+            Deleting removes the check-in photo too. Frames are captured only at flagged moments and are visible to signed-in
             recruiters in your organisation. Delete them once the hiring decision is
             made — they are biometric data in several jurisdictions.
           </p>

@@ -10,6 +10,7 @@ import {
   sessionProgress,
 } from "@/lib/interview";
 import { assignSections } from "@/lib/sections";
+import { saveSnapshot } from "@/lib/snapshots";
 import { clientIpHash, fail, handleError, ok, rateLimit } from "@/lib/http";
 import type { Blueprint } from "@/lib/blueprint";
 import type { Difficulty } from "@/lib/ai/types";
@@ -21,6 +22,12 @@ const Body = z.object({
   sttAvailable: z.boolean(),
   faceModelLoaded: z.boolean(),
   objectModelLoaded: z.boolean().default(false),
+  /**
+   * Check-in photo, base64 JPEG. Establishes who actually sat the interview —
+   * without it the recruiter has flagged frames from a stranger and no
+   * reference to compare them against.
+   */
+  identityPhoto: z.string().max(900_000).optional(),
   screen: z
     .object({
       width: z.number().int().nonnegative(),
@@ -132,6 +139,20 @@ export async function POST(
         timeLimitSec: q.timeLimitSec,
       })),
     });
+
+    // Store the check-in photo. A failure here must not abort the interview —
+    // the candidate is already waiting, and a missing photo is a gap in the
+    // record rather than a reason to refuse someone the test.
+    if (parsed.data.identityPhoto) {
+      try {
+        const { filename, bytes } = await saveSnapshot(session.id, parsed.data.identityPhoto);
+        await db.snapshot.create({
+          data: { sessionId: session.id, kind: "IDENTITY", filename, bytes },
+        });
+      } catch (err) {
+        console.error("[start] Identity photo rejected:", (err as Error).message);
+      }
+    }
 
     if (!parsed.data.faceModelLoaded) {
       await db.proctorEvent.create({

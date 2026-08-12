@@ -240,9 +240,21 @@ Senior and Staff level.
 ## How the interview runs
 
 1. **Consent** — every collected data category is listed, with a decline path.
-2. **Device check** — camera and microphone are required; the face model and
-   speech recogniser are probed and any gap is recorded on the session.
-3. **Rules** — expectations stated, then fullscreen is requested.
+2. **Check-in** — a three-step gate before the clock starts:
+   - **Camera.** Live face feedback ("no face", "more than one person", "face
+     detected") and a **check-in photo**, which the recruiter sees at the top of
+     the review page. Without it they have flagged frames of a stranger and no
+     reference to compare them against. The capture button stays disabled until
+     exactly one face is in frame.
+   - **Microphone.** A live level meter that requires **five consecutive loud
+     samples** before it will let the candidate through, so a door slam does not
+     pass a muted mic. A mic discovered dead at question three has already lost
+     the spoken answers.
+   - **Guide.** Navigation (next / previous / skip / the numbered jump squares /
+     what submitting a section does), every monitored behaviour stated
+     explicitly, and a checkbox the candidate must tick before the button
+     enables.
+
 4. **Sections** — the paper is split into sections, one per question type,
    easiest first. See below.
 5. **Submission** — grading runs in the background; the admin view offers a manual

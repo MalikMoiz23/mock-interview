@@ -291,9 +291,17 @@ model ProctorEvent {
   @@index([sessionId, at])
 }
 
+enum SnapshotKind {
+  /// Taken at check-in, before the interview starts. Establishes who sat it.
+  IDENTITY
+  /// Captured automatically when a proctoring rule was breached.
+  VIOLATION
+}
+
 model Snapshot {
   id        String   @id @default(cuid())
   sessionId String
+  kind      SnapshotKind @default(VIOLATION)
   eventId   String?  @unique
   /// Path relative to SNAPSHOT_DIR. Served only to authenticated admins.
   filename  String
