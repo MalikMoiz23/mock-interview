@@ -4,12 +4,18 @@ import { DOMAINS, type BankDomain } from "./question-bank";
 import { EXTRA_DOMAINS } from "./question-bank-extra";
 import { DEPTH_DOMAINS } from "./question-bank-depth";
 import { ENTRY_DOMAINS } from "./question-bank-entry";
+import { DEPTH_V2_DOMAINS } from "./bank";
 
 /** Merges the two banks so each domain is seeded once with all its questions. */
 function mergedDomains(): BankDomain[] {
   const bySlug = new Map<string, BankDomain>();
   for (const d of DOMAINS) bySlug.set(d.slug, { ...d, questions: [...d.questions] });
-  for (const extra of [...EXTRA_DOMAINS, ...DEPTH_DOMAINS, ...ENTRY_DOMAINS]) {
+  for (const extra of [
+    ...EXTRA_DOMAINS,
+    ...DEPTH_DOMAINS,
+    ...ENTRY_DOMAINS,
+    ...DEPTH_V2_DOMAINS,
+  ]) {
     const existing = bySlug.get(extra.slug);
     if (existing) existing.questions.push(...extra.questions);
     else bySlug.set(extra.slug, { ...extra, questions: [...extra.questions] });
