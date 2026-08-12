@@ -1,8 +1,13 @@
 import { z } from "zod";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { activeSession, resolveLink } from "@/lib/interview";
 import { gradeSession } from "@/lib/grading";
 import { clientIpHash, fail, handleError, ok, rateLimit } from "@/lib/http";
+
+// Grading runs inside this request's `after()` callback, so the handler's
+// budget has to cover it, not just the few milliseconds the candidate waits.
+export const maxDuration = 300;
 
 const Body = z.object({
   sessionId: z.string().min(1),
@@ -37,12 +42,22 @@ export async function POST(
       },
     });
 
-    // Grading can take a minute against a real model, so it runs detached and
-    // the candidate is released immediately. The admin view offers a manual
-    // re-grade if this promise dies with the process.
-    void gradeSession(session.id).catch((err) =>
-      console.error("[finish] Background grading failed:", err),
-    );
+    // Grading takes around a minute per long-form answer against a local model,
+    // so the candidate is released immediately and the work runs afterwards.
+    //
+    // This must be `after()`, not a bare floating promise. A promise left
+    // dangling past the response is not guaranteed to be driven to completion —
+    // the request scope can be torn down first, which silently loses the score
+    // and leaves the session stuck on SUBMITTED. `after()` is the supported way
+    // to keep post-response work alive.
+    after(async () => {
+      try {
+        await gradeSession(session.id);
+        console.log(`[finish] Graded session ${session.id}.`);
+      } catch (err) {
+        console.error("[finish] Background grading failed:", err);
+      }
+    });
 
     return ok({ ok: true });
   } catch (err) {

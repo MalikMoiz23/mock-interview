@@ -110,15 +110,18 @@ export default async function SessionPage({
             <RegradeButton
               sessionId={session.id}
               label={session.score ? "Re-grade" : "Grade now"}
+              autoStart={!session.score}
             />
           )}
         </div>
       </div>
 
-      {!session.score && session.status === "SUBMITTED" && (
+      {!session.score && session.status !== "PENDING" && session.status !== "IN_PROGRESS" && (
         <div className="card mt-6 p-4 text-sm text-ink-300">
-          Grading has not completed yet. It runs in the background after submission —
-          use <strong>Grade now</strong> if it did not finish.
+          No score yet — grading has started automatically and this page will fill in
+          when it finishes. It takes roughly a minute per written answer; multiple
+          choice is graded instantly. If it reports an error, check that the scoring
+          model is running (<span className="mono">ollama serve</span>).
         </div>
       )}
 
