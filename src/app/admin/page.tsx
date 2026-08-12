@@ -10,6 +10,7 @@ import {
   integrityColor,
   scoreColor,
 } from "@/components/ui";
+import { LinkActions } from "./link-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -112,7 +113,14 @@ export default async function DashboardPage() {
                           <RecommendationPill value={score.recommendation} />
                         </div>
                       ) : (
-                        <StatusPill value={latest.status} />
+                        <>
+                          <StatusPill value={latest.status} />
+                          {latest.status === "SUBMITTED" && (
+                            <div className="mt-1 text-xs text-ink-400">
+                              grading — open to follow
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -133,6 +141,15 @@ export default async function DashboardPage() {
                           Review →
                         </Link>
                       )}
+                      <div className="mt-2">
+                        <LinkActions
+                          linkId={link.id}
+                          candidateName={link.candidateName}
+                          status={link.status}
+                          sessionCount={link.sessions.length}
+                          hasResults={link.sessions.length > 0}
+                        />
+                      </div>
                     </td>
                   </tr>
                 );

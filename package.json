@@ -11,6 +11,7 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
+    "db:clean-tests": "node scripts/remove-test-data.mjs",
     "setup:models": "node scripts/setup-models.mjs"
   },
   "prisma": {
