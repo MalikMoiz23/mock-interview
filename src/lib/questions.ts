@@ -59,24 +59,59 @@ function toGenerated(r: {
  * same role in the same week do not sit an identical paper — the single most
  * obvious way for questions to leak between applicants.
  */
+type Usage = { count: number; lastServed: number };
+
 async function recentUsage(
   domainId: string,
   difficulty: Difficulty,
-): Promise<Map<string, number>> {
+): Promise<Map<string, Usage>> {
   const since = new Date(Date.now() - 60 * 86_400_000); // 60 days
   const rows = await db.sessionQuestion.findMany({
     where: {
       templateId: { not: null },
       session: { createdAt: { gte: since }, link: { domainId, difficulty } },
     },
-    select: { templateId: true },
+    select: { templateId: true, servedAt: true, session: { select: { createdAt: true } } },
   });
-  const counts = new Map<string, number>();
+  const usage = new Map<string, Usage>();
   for (const r of rows) {
     if (!r.templateId) continue;
-    counts.set(r.templateId, (counts.get(r.templateId) ?? 0) + 1);
+    const at = (r.servedAt ?? r.session.createdAt).getTime();
+    const prev = usage.get(r.templateId);
+    usage.set(r.templateId, {
+      count: (prev?.count ?? 0) + 1,
+      lastServed: Math.max(prev?.lastServed ?? 0, at),
+    });
   }
-  return counts;
+  return usage;
+}
+
+/**
+ * Templates this candidate has already been shown, for this role, ever.
+ *
+ * Org-wide rotation stops two applicants sitting the same paper, but it does
+ * not stop the *same person* seeing a question twice — with a shallow pool the
+ * least-used question can easily be one they answered last month. A returning
+ * candidate is the case where a repeat actually hands over the answer, so their
+ * own history is an outright exclusion rather than a ranking nudge.
+ *
+ * Matched on email rather than link, because a second attempt means a second
+ * link. Deliberately not time-limited: remembering a question you were asked is
+ * not something that expires after sixty days.
+ */
+async function seenByCandidate(
+  candidateEmail: string | null,
+  domainId: string,
+): Promise<Set<string>> {
+  if (!candidateEmail) return new Set();
+  const rows = await db.sessionQuestion.findMany({
+    where: {
+      templateId: { not: null },
+      session: { link: { domainId, candidateEmail: candidateEmail.toLowerCase() } },
+    },
+    select: { templateId: true },
+  });
+  return new Set(rows.map((r) => r.templateId).filter((id): id is string => id !== null));
 }
 
 async function fromBank(
@@ -85,24 +120,45 @@ async function fromBank(
   type: QuestionType,
   count: number,
   seed: string,
-  usage: Map<string, number>,
+  usage: Map<string, Usage>,
+  seen: Set<string>,
 ): Promise<GeneratedQuestion[]> {
   if (count <= 0) return [];
   const rows = await db.questionTemplate.findMany({
     where: { domainId, type, difficulty: { in: NEIGHBOURS[difficulty] } },
   });
 
-  // Rank by: least-recently-used first, then exact difficulty, then a
-  // per-session shuffle. The shuffle alone is not enough — with a bank barely
-  // deep enough for the paper, every candidate would still see the same set.
-  const scored = seededShuffle(rows, seed + type).map((r, i) => ({
-    row: r,
-    used: usage.get(r.id) ?? 0,
-    exact: r.difficulty === difficulty ? 0 : 1,
-    jitter: i,
-  }));
+  // Ranked, not filtered. Every key is a preference, so a pool too small to
+  // satisfy them still returns a full paper — it just starts conceding the
+  // weakest preference first. Filtering would hand back a short section.
+  //
+  //  1. never shown to this candidate      — a repeat here gives them the answer
+  //  2. least recently served org-wide     — true LRU, not a raw count, so a
+  //                                          question used once last year
+  //                                          outranks one used once yesterday
+  //  3. fewest times served                — breaks ties between equally old ones
+  //  4. exact difficulty over a neighbour
+  //  5. per-session shuffle                — the only source of variety once the
+  //                                          pool is exhausted, which is why
+  //                                          pool depth matters more than this
+  const scored = seededShuffle(rows, seed + type).map((r, i) => {
+    const u = usage.get(r.id);
+    return {
+      row: r,
+      repeat: seen.has(r.id) ? 1 : 0,
+      lastServed: u?.lastServed ?? 0,
+      used: u?.count ?? 0,
+      exact: r.difficulty === difficulty ? 0 : 1,
+      jitter: i,
+    };
+  });
   scored.sort(
-    (a, b) => a.used - b.used || a.exact - b.exact || a.jitter - b.jitter,
+    (a, b) =>
+      a.repeat - b.repeat ||
+      a.lastServed - b.lastServed ||
+      a.used - b.used ||
+      a.exact - b.exact ||
+      a.jitter - b.jitter,
   );
 
   return scored.slice(0, count).map((s) => toGenerated(s.row));
@@ -187,6 +243,8 @@ export async function buildQuestionSet(input: {
   difficulty: Difficulty;
   blueprint: Blueprint;
   seed: string;
+  /** Lets a returning candidate be given questions they have not already seen. */
+  candidateEmail?: string | null;
 }): Promise<QuestionSetResult> {
   const provider = getProvider();
   if (blueprintTotal(input.blueprint) === 0) return { questions: [], source: "bank" };
@@ -216,11 +274,12 @@ export async function buildQuestionSet(input: {
 
   // Bank pass.
   const usage = await recentUsage(input.domainId, input.difficulty);
+  const seen = await seenByCandidate(input.candidateEmail ?? null, input.domainId);
   const banked: GeneratedQuestion[] = [];
   const missing: Partial<Record<QuestionType, number>> = {};
   for (const type of QUESTION_TYPES) {
     const want = input.blueprint[type] ?? 0;
-    const got = await fromBank(input.domainId, input.difficulty, type, want, input.seed, usage);
+    const got = await fromBank(input.domainId, input.difficulty, type, want, input.seed, usage, seen);
     banked.push(...got);
     if (got.length < want) missing[type] = want - got.length;
   }
@@ -241,7 +300,11 @@ export async function buildQuestionSet(input: {
     },
   });
   const substitutes = seededShuffle(spare, input.seed + "sub")
-    .sort((a, b) => (usage.get(a.id) ?? 0) - (usage.get(b.id) ?? 0))
+    .sort(
+      (a, b) =>
+        (seen.has(a.id) ? 1 : 0) - (seen.has(b.id) ? 1 : 0) ||
+        (usage.get(a.id)?.lastServed ?? 0) - (usage.get(b.id)?.lastServed ?? 0),
+    )
     .slice(0, shortfall)
     .map(toGenerated);
   banked.push(...substitutes);

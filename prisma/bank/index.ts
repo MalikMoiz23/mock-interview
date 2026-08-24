@@ -7,6 +7,9 @@ import { DEVOPS_DEPTH } from "./devops-cloud";
 import { FRONTEND_DEPTH } from "./frontend-react";
 import { FULLSTACK_DEPTH } from "./fullstack-development";
 import { GRAPHIC_DESIGN_DEPTH } from "./graphic-design";
+import { MCQ_DEPTH_DESIGN } from "./mcq-depth-design";
+import { MCQ_DEPTH_INFRA } from "./mcq-depth-infra";
+import { MCQ_DEPTH_ENGINEERING } from "./mcq-depth-engineering";
 import { QA_DEPTH } from "./qa-automation";
 import { TOPUP_DOMAINS } from "./topup";
 import { UIUX_DEPTH } from "./uiux-design";
@@ -35,4 +38,7 @@ export const DEPTH_V2_DOMAINS: BankDomain[] = [
   UIUX_DEPTH,
   GRAPHIC_DESIGN_DEPTH,
   ...TOPUP_DOMAINS,
+  ...MCQ_DEPTH_ENGINEERING,
+  ...MCQ_DEPTH_DESIGN,
+  ...MCQ_DEPTH_INFRA,
 ];

@@ -111,6 +111,7 @@ export async function POST(
       difficulty: link.difficulty as Difficulty,
       blueprint: link.blueprint as unknown as Blueprint,
       seed: session.id,
+      candidateEmail: link.candidateEmail,
     });
 
     if (set.questions.length === 0) {
