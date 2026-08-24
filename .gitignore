@@ -33,3 +33,8 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Local assistant/editor tooling state. Never belongs in the repository.
+.claude/
+.cursor/
+.aider*
