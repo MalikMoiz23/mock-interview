@@ -105,6 +105,18 @@ export async function gradeSession(sessionId: string): Promise<void> {
     };
   }
 
+  // The model is asked for an overall score and is unreliable at it: a paper
+  // with four correct multiple-choice answers and five blank ones came back as
+  // 0, ignoring its own per-question marks. Per-question scores are either
+  // exact (multiple choice) or already derived from rubric criteria, so the
+  // honest total is the mean of those rather than a number the model guessed.
+  // Its dimensions, rationale, strengths and concerns are still worth having.
+  const overall = perQuestion.length
+    ? Math.round(
+        perQuestion.reduce((sum, q) => sum + q.score.score, 0) / perQuestion.length,
+      )
+    : 0;
+
   const integrity = computeIntegrity(session.events, {
     faceModelLoaded: session.faceModelLoaded,
     sttAvailable: session.sttAvailable,
@@ -121,7 +133,7 @@ export async function gradeSession(sessionId: string): Promise<void> {
     where: { sessionId },
     create: {
       sessionId,
-      overall: Math.round(summary.overall),
+      overall,
       dimensions: summary.dimensions as unknown as object,
       integrityScore: integrity.score,
       integrityFlags: integrity as unknown as object,
@@ -133,7 +145,7 @@ export async function gradeSession(sessionId: string): Promise<void> {
       model: provider.model,
     },
     update: {
-      overall: Math.round(summary.overall),
+      overall,
       dimensions: summary.dimensions as unknown as object,
       integrityScore: integrity.score,
       integrityFlags: integrity as unknown as object,

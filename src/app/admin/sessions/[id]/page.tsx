@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
-import { integrityBand, type IntegrityResult } from "@/lib/integrity";
+import { computeIntegrity, integrityBand, type IntegrityResult } from "@/lib/integrity";
 import { QUESTION_TYPE_META } from "@/lib/blueprint";
 import type { AnswerScore } from "@/lib/ai/types";
 import {
@@ -42,9 +42,19 @@ export default async function SessionPage({
   });
   if (!session) notFound();
 
-  const integrity = session.score
-    ? (session.score.integrityFlags as unknown as IntegrityResult)
-    : null;
+  // Integrity is arithmetic over the event log — it needs no model and is ready
+  // the moment the interview ends. Waiting for grading to finish before showing
+  // it meant a recruiter stared at nothing for minutes while the number already
+  // existed. Once grading has run, the stored snapshot is authoritative.
+  const integrity: IntegrityResult | null =
+    (session.score?.integrityFlags as unknown as IntegrityResult | undefined) ??
+    (session.status === "PENDING" || session.status === "IN_PROGRESS"
+      ? null
+      : computeIntegrity(session.events, {
+          faceModelLoaded: session.faceModelLoaded,
+          sttAvailable: session.sttAvailable,
+          objectModelLoaded: session.objectModelLoaded,
+        }));
   const dimensions = session.score
     ? (session.score.dimensions as unknown as Record<string, number>)
     : null;
@@ -116,19 +126,32 @@ export default async function SessionPage({
         </div>
       </div>
 
-      {!session.score && session.status !== "PENDING" && session.status !== "IN_PROGRESS" && (
-        <div className="card mt-6 p-4 text-sm text-ink-300">
-          No score yet — grading has started automatically and this page will fill in
-          when it finishes. It takes roughly a minute per written answer; multiple
-          choice is graded instantly. If it reports an error, check that the scoring
-          model is running (<span className="mono">ollama serve</span>).
-        </div>
-      )}
-
-      {/* ---- Score + integrity ------------------------------------------- */}
-      {session.score && (
+      {/* ---- Score + integrity -------------------------------------------
+          Integrity renders as soon as the interview ends. Competence fills in
+          separately when the model finishes, which on a local model is roughly
+          a minute per written answer. */}
+      {integrity && (
         <div className="mt-6 grid gap-5 lg:grid-cols-3">
           <div className="card p-5 lg:col-span-2">
+            {!session.score ? (
+              <>
+                <div className="label">Competence</div>
+                <div className="text-4xl font-bold text-ink-400">—</div>
+                <p className="mt-4 text-sm leading-relaxed text-ink-300">
+                  Still grading. Multiple choice is already marked; each written answer
+                  takes about a minute against the local model, and they are graded one
+                  after another. Refresh to check.
+                </p>
+                <p className="mt-3 text-xs leading-relaxed text-ink-400">
+                  If this does not fill in, check the scoring model is running with{" "}
+                  <span className="mono">ollama serve</span>, then use{" "}
+                  <strong className="text-ink-300">Grade now</strong>. Integrity on the
+                  right is complete either way — it is computed from the event log and
+                  never waits for the model.
+                </p>
+              </>
+            ) : (
+            <>
             <div className="flex items-start justify-between">
               <div>
                 <div className="label">Competence</div>
@@ -201,20 +224,22 @@ export default async function SessionPage({
                 </>
               )}
             </p>
+            </>
+            )}
           </div>
 
           <div className="card p-5">
             <div className="label">Integrity</div>
             <div
               className="text-4xl font-bold"
-              style={{ color: integrityColor(session.score.integrityScore) }}
+              style={{ color: integrityColor(integrity.score) }}
             >
-              {session.score.integrityScore}
+              {integrity.score}
               <span className="text-lg font-normal text-ink-400">/100</span>
             </div>
             <div className="mt-2">
-              <Pill color={integrityColor(session.score.integrityScore)}>
-                {integrityBand(session.score.integrityScore)}
+              <Pill color={integrityColor(integrity.score)}>
+                {integrityBand(integrity.score)}
               </Pill>
             </div>
 
