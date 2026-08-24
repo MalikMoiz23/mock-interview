@@ -13,8 +13,6 @@ export async function ProviderBanner() {
   const provider = getProvider();
   const health = await providerHealth();
 
-  if (provider.name === "anthropic" && health.ok) return null;
-
   const isMock = provider.name === "mock";
   const colour = isMock || !health.ok ? "var(--color-warn)" : "var(--color-good)";
 

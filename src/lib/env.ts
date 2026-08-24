@@ -16,13 +16,7 @@ export const env = {
     return process.env.APP_BASE_URL ?? "http://localhost:3000";
   },
   get aiProvider() {
-    return (process.env.AI_PROVIDER ?? "mock").toLowerCase();
-  },
-  get anthropicApiKey() {
-    return process.env.ANTHROPIC_API_KEY ?? "";
-  },
-  get anthropicModel() {
-    return process.env.ANTHROPIC_MODEL ?? "claude-opus-5";
+    return (process.env.AI_PROVIDER ?? "ollama").toLowerCase();
   },
   get ollamaBaseUrl() {
     return process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";

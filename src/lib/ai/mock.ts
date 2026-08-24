@@ -19,7 +19,7 @@ import type {
  * substance the answer has. Same input always produces the same score, which
  * makes it usable for tests and demos — but it cannot judge correctness,
  * reasoning quality, or whether an answer is actually right. Do not ship
- * hiring decisions on it. Set AI_PROVIDER=anthropic once you have a key.
+ * hiring decisions on it. Run Ollama and set AI_PROVIDER=ollama instead.
  *
  * MCQ answers never reach this class — they are graded by exact match in
  * `gradeMcq`, which is objective regardless of provider.

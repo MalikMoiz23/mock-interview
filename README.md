@@ -57,11 +57,12 @@ candidates.
 
 Next.js 15 (App Router) · TypeScript · PostgreSQL + Prisma · Tailwind v4 ·
 MediaPipe face + object detection (in-browser) · Web Speech API · Ollama for
-local scoring · Anthropic Claude optional.
+local scoring.
 
 **Cost to run: nothing.** Every npm dependency is MIT / Apache-2.0 / BSD,
 PostgreSQL is free, the proctoring models are Apache-2.0, and scoring runs on a
-model on your own machine. The paid Claude provider is opt-in and off by default.
+model on your own machine. There is no hosted provider and nothing bills per
+interview.
 
 ---
 
@@ -89,10 +90,8 @@ Open http://localhost:3000 and sign in with `SEED_ADMIN_EMAIL` /
 | `DATABASE_URL` | PostgreSQL connection string |
 | `AUTH_SECRET` | Signs admin session cookies and the IP hash. 32+ random bytes |
 | `APP_BASE_URL` | Origin used when generating candidate links |
-| `AI_PROVIDER` | `ollama` (local, free, default), `mock` (offline heuristic) or `anthropic` (paid) |
+| `AI_PROVIDER` | `ollama` (local, default) or `mock` (offline heuristic) |
 | `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | Local model endpoint and tag |
-| `ANTHROPIC_API_KEY` | Required when `AI_PROVIDER=anthropic` |
-| `ANTHROPIC_MODEL` | Defaults to `claude-opus-5` |
 | `SNAPSHOT_DIR` | Where violation frames are written |
 | `SNAPSHOT_MAX_PER_SESSION` | Hard cap on stored frames per session |
 
@@ -100,17 +99,18 @@ Open http://localhost:3000 and sign in with `SEED_ADMIN_EMAIL` /
 
 ## Choosing a scorer
 
-Three providers behind one interface. Multiple choice is graded by exact match
-in all three, so it never costs anything and is never a judgement call.
+Two providers behind one interface, both free and both running on your own
+machine. Multiple choice is graded by exact match in either, so it never costs
+anything and is never a judgement call.
 
-| | `ollama` **(default)** | `mock` | `anthropic` |
-|---|---|---|---|
-| **Cost** | Free | Free | ~$0.36 / interview |
-| **Runs** | Your machine | In-process | Anthropic's API |
-| **Candidate data leaves your network** | No | No | Yes |
-| **Works offline** | Yes | Yes | No |
-| **Judges correctness** | Yes | **No** | Yes, best |
-| **Speed (10 questions)** | ~1–3 min | Instant | ~30 s |
+| | `ollama` **(default)** | `mock` |
+|---|---|---|
+| **Cost** | Free | Free |
+| **Runs** | Your machine | In-process |
+| **Candidate data leaves your network** | No | No |
+| **Works offline** | Yes | Yes |
+| **Judges correctness** | Yes | **No** |
+| **Speed (10 questions)** | ~1–3 min | Instant |
 
 ### `ollama` — free and actually reads the answers
 
@@ -167,18 +167,6 @@ candidate never waits.
 Counts rubric keywords. Deterministic, instant, and genuinely useful for testing
 the flow end to end. It will happily give a fluent, completely wrong answer a
 good score. **Not for hiring decisions.** The admin UI says so on every page.
-
-### `anthropic` — paid, best quality
-
-```bash
-AI_PROVIDER=anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-~6,600 input and ~6,600 output tokens per 10-question paper, so roughly **$0.36
-per interview** on `claude-opus-5` with thinking, or ~$0.07 on `claude-haiku-4-5`.
-MCQs contribute nothing to that. Here questions *are* generated per session, so
-two candidates for the same role never see the same paper.
 
 ### Adding another
 
@@ -393,7 +381,7 @@ prisma/question-bank-extra.ts depth bank, so rotation has room to vary papers
 src/lib/sections.ts           section planning and instructions
 prisma/seed.ts                seeding + MCQ answer-key validation
 src/lib/blueprint.ts          question-type mix, difficulty presets, time budget
-src/lib/ai/                   provider adapter (types, mock, anthropic)
+src/lib/ai/                   provider adapter (types, mock, ollama)
 src/lib/proctor/face.ts       face presence, head pose, mouth movement
 src/lib/proctor/objects.ts    phone and second-person detection
 src/lib/proctor/audio.ts      speech-band energy, background-voice logic

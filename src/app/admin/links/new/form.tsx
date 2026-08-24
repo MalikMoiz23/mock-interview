@@ -468,7 +468,7 @@ export function NewLinkForm({ domains }: { domains: Domain[] }) {
                 {coverage.requested - coverage.curated - coverage.substitutes} will be
                 generated at interview time.{" "}
                 {coverage.generatedAreSynthetic
-                  ? "You are running the offline mock provider, so these are generic placeholders — reduce the count or add an ANTHROPIC_API_KEY."
+                  ? "You are running the offline mock provider, so these are generic placeholders — reduce the count, or start Ollama for real questions."
                   : "These are written live by the model for this candidate."}
               </p>
             )}
