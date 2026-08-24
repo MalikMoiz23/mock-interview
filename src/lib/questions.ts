@@ -221,11 +221,42 @@ export async function bankCoverage(
 }
 
 /** Ordered easiest-first so the candidate warms up before the hard questions. */
-function orderPaper(questions: GeneratedQuestion[]): GeneratedQuestion[] {
-  const rank = new Map(QUESTION_TYPES.map((t, i) => [t, i]));
-  return [...questions].sort(
-    (a, b) => (rank.get(a.type) ?? 99) - (rank.get(b.type) ?? 99),
+/**
+ * Shuffles a multiple-choice question's options and moves the answer key with
+ * them.
+ *
+ * Authoring a plausible distractor first and the true statement second is a
+ * natural habit, and it left 99% of the bank's answers in position B — a
+ * candidate who noticed could have scored 99% without reading a single
+ * question. Rather than hand-reordering hundreds of questions and hoping the
+ * habit does not return, the order is randomised per session at the point the
+ * paper is built, which fixes the existing bias and any future one.
+ *
+ * Seeded by session and prompt, so a given session always rebuilds an identical
+ * paper — a resumed interview must not reshuffle the options underneath the
+ * candidate. Two candidates get different orders, which also means a leaked
+ * screenshot conveys less.
+ */
+function shuffleChoices(q: GeneratedQuestion, seed: string): GeneratedQuestion {
+  if (q.type !== "MCQ" || q.options.length < 2) return q;
+  if (q.correctIndex < 0 || q.correctIndex >= q.options.length) return q;
+
+  const order = seededShuffle(
+    q.options.map((_, i) => i),
+    seed + q.prompt,
   );
+  return {
+    ...q,
+    options: order.map((i) => q.options[i]),
+    correctIndex: order.indexOf(q.correctIndex),
+  };
+}
+
+function orderPaper(questions: GeneratedQuestion[], seed: string): GeneratedQuestion[] {
+  const rank = new Map(QUESTION_TYPES.map((t, i) => [t, i]));
+  return [...questions]
+    .sort((a, b) => (rank.get(a.type) ?? 99) - (rank.get(b.type) ?? 99))
+    .map((q) => shuffleChoices(q, seed));
 }
 
 /**
@@ -265,7 +296,7 @@ export async function buildQuestionSet(input: {
         const trimmed = QUESTION_TYPES.flatMap((t) =>
           generated.filter((q) => q.type === t).slice(0, input.blueprint[t] ?? 0),
         );
-        return { questions: orderPaper(trimmed), source: "ai" };
+        return { questions: orderPaper(trimmed, input.seed), source: "ai" };
       }
     } catch (err) {
       console.error("[questions] Live generation failed, using bank:", (err as Error).message);
@@ -285,7 +316,7 @@ export async function buildQuestionSet(input: {
   }
 
   let shortfall = Object.values(missing).reduce((a, b) => a + (b ?? 0), 0);
-  if (shortfall === 0) return { questions: orderPaper(banked), source: "bank" };
+  if (shortfall === 0) return { questions: orderPaper(banked, input.seed), source: "bank" };
 
   // Substitute before generating. A real vetted question of a different type
   // beats a generically generated one of the right type, and with the mock
@@ -312,7 +343,7 @@ export async function buildQuestionSet(input: {
 
   if (shortfall === 0) {
     return {
-      questions: orderPaper(banked),
+      questions: orderPaper(banked, input.seed),
       source: "bank",
       note:
         substitutes.length > 0
@@ -344,7 +375,7 @@ export async function buildQuestionSet(input: {
   }
 
   return {
-    questions: orderPaper([...banked, ...filler.slice(0, shortfall)]),
+    questions: orderPaper([...banked, ...filler.slice(0, shortfall)], input.seed),
     source: banked.length > 0 ? "mixed" : "synthetic",
     note: `The curated bank was short by ${shortfall} question(s) for ${input.domainName} at ${input.difficulty}; those were generated.`,
   };

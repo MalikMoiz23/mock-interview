@@ -23,6 +23,46 @@ function mergedDomains(): BankDomain[] {
   return [...bySlug.values()];
 }
 
+/**
+ * Spreads the answer key across the options.
+ *
+ * Writing a plausible distractor first and the true statement second is a
+ * natural authoring habit, and unchecked it put 99% of this bank's answers in
+ * position B — enough for a candidate who noticed to score 99% without reading
+ * anything. Normalising here means the stored bank is honest whatever reads it;
+ * the paper builder shuffles again per session on top of this.
+ *
+ * Keyed on the prompt so re-seeding is idempotent: the same question always
+ * lands in the same place, and a diff of the database stays readable.
+ */
+function shuffleChoices(
+  options: string[] | undefined,
+  correctIndex: number | undefined,
+  prompt: string,
+): { options?: string[]; correctIndex?: number } {
+  if (!options || options.length < 2) return { options, correctIndex };
+  if (correctIndex === undefined || correctIndex < 0 || correctIndex >= options.length) {
+    return { options, correctIndex };
+  }
+
+  let h = 2166136261;
+  for (let i = 0; i < prompt.length; i++) {
+    h ^= prompt.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const order = options.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    h = Math.imul(h ^ (h >>> 15), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    const j = Math.abs(h) % (i + 1);
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  return {
+    options: order.map((i) => options[i]),
+    correctIndex: order.indexOf(correctIndex),
+  };
+}
+
 const db = new PrismaClient();
 
 async function main() {
@@ -72,6 +112,7 @@ async function main() {
         return true;
       }).map((q) => {
         perType[q.type] = (perType[q.type] ?? 0) + 1;
+        const shuffled = shuffleChoices(q.options, q.correctIndex, q.prompt);
         return {
           domainId: domain.id,
           difficulty: q.difficulty,
@@ -80,8 +121,8 @@ async function main() {
           prompt: q.prompt,
           timeLimitSec: q.timeLimitSec,
           rubric: { criteria: q.criteria },
-          options: q.options ?? undefined,
-          correctIndex: q.correctIndex ?? undefined,
+          options: shuffled.options ?? undefined,
+          correctIndex: shuffled.correctIndex ?? undefined,
           explanation: q.explanation ?? undefined,
         };
       }),
@@ -112,6 +153,26 @@ async function main() {
     process.exitCode = 1;
   } else {
     console.log(`  ✓ all ${broken.length} MCQs have a valid answer key`);
+  }
+
+  // A valid answer key is not enough — it also has to be unpredictable. This
+  // bank was once 99% position B, which a candidate could have exploited
+  // without reading a question. Checked on every seed so it cannot drift back.
+  const spread = [0, 0, 0, 0, 0, 0];
+  for (const q of broken) if (q.correctIndex !== null) spread[q.correctIndex] += 1;
+  const share = spread
+    .map((n, i) => ({ letter: String.fromCharCode(65 + i), n, pct: (n / broken.length) * 100 }))
+    .filter((s) => s.n > 0);
+  console.log(
+    `  answer key spread: ${share.map((s) => `${s.letter} ${s.pct.toFixed(0)}%`).join(" · ")}`,
+  );
+  const worst = Math.max(...share.map((s) => s.pct));
+  if (worst > 40) {
+    console.error(
+      `  ✗ answer keys are clustered — one position holds ${worst.toFixed(0)}% of them. ` +
+        `A candidate could guess it. Check the shuffle is running.`,
+    );
+    process.exitCode = 1;
   }
   console.log(`Admin login: ${email} / ${password}`);
   console.log("Change that password before exposing this to anyone.");
